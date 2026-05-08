@@ -4,17 +4,37 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
 
-use crate::openai_compat::{OpenAICompatAdapter, OpenAICompatKind};
+use crate::openai_compat::{OpenAICompatAdapter, OpenAICompatPolicy};
+use crate::reasoning::{ReasoningStyle, ResolvedReasoning};
 use crate::{ProviderAdapter, ProviderRequestContext};
 
 pub struct OpenAIAdapter {
-    inner: OpenAICompatAdapter,
+    inner: OpenAICompatAdapter<OpenAIPolicy>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct OpenAIPolicy;
+
+impl OpenAICompatPolicy for OpenAIPolicy {
+    fn max_completion_tokens_cap(&self, request: &ChatRequest) -> Option<u32> {
+        crate::deepseek::deepseek_compat_max_completion_tokens_cap(request)
+    }
+
+    fn suppress_sampling_params(&self, reasoning: Option<&ResolvedReasoning>) -> bool {
+        reasoning.is_some_and(|r| {
+            matches!(
+                r.style,
+                ReasoningStyle::OpenAIReasoningEffort | ReasoningStyle::OpenAIResponsesReasoning
+            ) && !matches!(r.level.as_str(), "off" | "none")
+                && r.suppress_sampling_params
+        })
+    }
 }
 
 impl OpenAIAdapter {
     pub fn new() -> Self {
         Self {
-            inner: OpenAICompatAdapter::new(OpenAICompatKind::OpenAI),
+            inner: OpenAICompatAdapter::new(OpenAIPolicy),
         }
     }
 }

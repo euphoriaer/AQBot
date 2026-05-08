@@ -4,17 +4,18 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
 
-use crate::openai_compat::{OpenAICompatAdapter, OpenAICompatKind};
+use crate::openai::OpenAIPolicy;
+use crate::openai_compat::OpenAICompatAdapter;
 use crate::{ProviderAdapter, ProviderRequestContext};
 
 pub struct CustomOpenAIAdapter {
-    inner: OpenAICompatAdapter,
+    inner: OpenAICompatAdapter<OpenAIPolicy>,
 }
 
 impl CustomOpenAIAdapter {
     pub fn new() -> Self {
         Self {
-            inner: OpenAICompatAdapter::new(OpenAICompatKind::Custom),
+            inner: OpenAICompatAdapter::new(OpenAIPolicy),
         }
     }
 }

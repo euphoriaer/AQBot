@@ -4,17 +4,47 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
 
-use crate::openai_compat::{OpenAICompatAdapter, OpenAICompatKind};
+use crate::openai_compat::{OpenAICompatAdapter, OpenAICompatPolicy};
+use crate::reasoning::{ReasoningStyle, ResolvedReasoning};
 use crate::{ProviderAdapter, ProviderRequestContext};
 
 pub struct XAIAdapter {
-    inner: OpenAICompatAdapter,
+    inner: OpenAICompatAdapter<XAIPolicy>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct XAIPolicy;
+
+impl OpenAICompatPolicy for XAIPolicy {
+    fn default_base_url(&self) -> &'static str {
+        "https://api.x.ai/v1"
+    }
+
+    fn error_label(&self) -> &'static str {
+        "xAI API"
+    }
+
+    fn default_reasoning_style(&self, _request: &ChatRequest) -> ReasoningStyle {
+        ReasoningStyle::None
+    }
+
+    fn normalize_reasoning_effort(&self, _level: &str, _effort: String) -> Option<String> {
+        None
+    }
+
+    fn use_max_completion_tokens(&self, _request: &ChatRequest) -> bool {
+        false
+    }
+
+    fn suppress_sampling_params(&self, _reasoning: Option<&ResolvedReasoning>) -> bool {
+        false
+    }
 }
 
 impl XAIAdapter {
     pub fn new() -> Self {
         Self {
-            inner: OpenAICompatAdapter::new(OpenAICompatKind::XAI),
+            inner: OpenAICompatAdapter::new(XAIPolicy),
         }
     }
 }

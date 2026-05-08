@@ -4,59 +4,83 @@ use async_trait::async_trait;
 use futures::Stream;
 use futures::StreamExt;
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value};
 use std::pin::Pin;
 
-use crate::reasoning::{resolve_reasoning, ReasoningStyle};
+use crate::reasoning::{resolve_reasoning, ReasoningStyle, ResolvedReasoning};
 use crate::{build_http_client, resolve_chat_url, ProviderAdapter, ProviderRequestContext};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OpenAICompatKind {
-    OpenAI,
-    Custom,
-    DeepSeek,
-    XAI,
-    GLM,
-    SiliconFlow,
-}
-
-pub(crate) struct OpenAICompatAdapter {
-    client: reqwest::Client,
-    kind: OpenAICompatKind,
-}
-
-impl OpenAICompatAdapter {
-    pub(crate) fn new(kind: OpenAICompatKind) -> Self {
-        Self {
-            client: crate::build_default_http_client()
-                .expect("Failed to build default HTTP client"),
-            kind,
-        }
-    }
-
+pub(crate) trait OpenAICompatPolicy: Clone + Send + Sync + 'static {
     fn default_base_url(&self) -> &'static str {
-        match self.kind {
-            OpenAICompatKind::OpenAI | OpenAICompatKind::Custom => "https://api.openai.com/v1",
-            OpenAICompatKind::DeepSeek => "https://api.deepseek.com/v1",
-            OpenAICompatKind::XAI => "https://api.x.ai/v1",
-            OpenAICompatKind::GLM => "https://open.bigmodel.cn/api/paas/v4",
-            OpenAICompatKind::SiliconFlow => "https://api.siliconflow.cn/v1",
-        }
+        "https://api.openai.com/v1"
     }
 
     fn error_label(&self) -> &'static str {
-        match self.kind {
-            OpenAICompatKind::OpenAI | OpenAICompatKind::Custom => "OpenAI API",
-            OpenAICompatKind::DeepSeek => "DeepSeek API",
-            OpenAICompatKind::XAI => "xAI API",
-            OpenAICompatKind::GLM => "GLM API",
-            OpenAICompatKind::SiliconFlow => "SiliconFlow API",
+        "OpenAI API"
+    }
+
+    fn default_reasoning_style(&self, _request: &ChatRequest) -> ReasoningStyle {
+        ReasoningStyle::OpenAIReasoningEffort
+    }
+
+    fn normalize_reasoning_effort(&self, level: &str, effort: String) -> Option<String> {
+        active_reasoning_level(level).then_some(effort)
+    }
+
+    fn use_max_completion_tokens(&self, request: &ChatRequest) -> bool {
+        request.use_max_completion_tokens == Some(true)
+            || request.model.starts_with("o1")
+            || request.model.starts_with("o3")
+            || request.model.starts_with("o4")
+            || request.model.starts_with("gpt-5")
+    }
+
+    fn max_completion_tokens_cap(&self, _request: &ChatRequest) -> Option<u32> {
+        None
+    }
+
+    fn suppress_sampling_params(&self, reasoning: Option<&ResolvedReasoning>) -> bool {
+        reasoning.is_some_and(|r| active_reasoning_level(&r.level) && r.suppress_sampling_params)
+    }
+
+    fn extra_body_fields(&self, _reasoning: Option<&ResolvedReasoning>) -> Map<String, Value> {
+        Map::new()
+    }
+
+    fn include_assistant_reasoning_content(
+        &self,
+        _messages: &[ChatMessage],
+        _tools: &Option<Vec<ChatTool>>,
+    ) -> bool {
+        false
+    }
+
+    fn format_error(&self, status: reqwest::StatusCode, text: &str) -> String {
+        format_openai_compat_error(self.error_label(), status, text)
+    }
+}
+
+pub(crate) struct OpenAICompatAdapter<P> {
+    client: reqwest::Client,
+    policy: P,
+}
+
+impl<P> OpenAICompatAdapter<P>
+where
+    P: OpenAICompatPolicy,
+{
+    pub(crate) fn new(policy: P) -> Self {
+        Self {
+            client: crate::build_default_http_client()
+                .expect("Failed to build default HTTP client"),
+            policy,
         }
     }
 
     fn base_url(&self, ctx: &ProviderRequestContext) -> String {
         ctx.base_url
             .clone()
-            .unwrap_or_else(|| self.default_base_url().to_string())
+            .unwrap_or_else(|| self.policy.default_base_url().to_string())
     }
 
     fn chat_url(&self, ctx: &ProviderRequestContext) -> String {
@@ -96,27 +120,13 @@ struct OpenAIRequest {
     tools: Option<Vec<ChatTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
-    /// SiliconFlow-style thinking toggle
-    #[serde(skip_serializing_if = "Option::is_none")]
-    enable_thinking: Option<bool>,
-    /// SiliconFlow-style thinking token budget
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thinking_budget: Option<u32>,
-    /// GLM/Z.AI-style thinking switch
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thinking: Option<GlmThinking>,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
 }
 
 #[derive(Serialize)]
 struct StreamOptions {
     include_usage: bool,
-}
-
-#[derive(Serialize)]
-struct GlmThinking {
-    #[serde(rename = "type")]
-    r#type: String,
-    clear_thinking: bool,
 }
 
 #[derive(Serialize)]
@@ -531,134 +541,51 @@ fn convert_messages(
         .collect()
 }
 
-fn default_reasoning_style(kind: OpenAICompatKind, request: &ChatRequest) -> ReasoningStyle {
-    match kind {
-        OpenAICompatKind::Custom => match request.thinking_param_style.as_deref() {
-            Some("enable_thinking") => ReasoningStyle::SiliconFlowEnableThinking,
-            Some("none") => ReasoningStyle::None,
-            _ => ReasoningStyle::OpenAIReasoningEffort,
-        },
-        OpenAICompatKind::OpenAI | OpenAICompatKind::DeepSeek => {
-            ReasoningStyle::OpenAIReasoningEffort
-        }
-        OpenAICompatKind::SiliconFlow => ReasoningStyle::SiliconFlowEnableThinking,
-        OpenAICompatKind::GLM => ReasoningStyle::GlmThinking,
-        OpenAICompatKind::XAI => ReasoningStyle::None,
-    }
-}
-
 fn active_reasoning_level(level: &str) -> bool {
     !matches!(level, "off" | "none")
 }
 
-fn normalize_reasoning_effort(
-    kind: OpenAICompatKind,
-    level: &str,
-    effort: String,
-) -> Option<String> {
-    if !active_reasoning_level(level) {
-        return None;
-    }
-    match kind {
-        OpenAICompatKind::OpenAI | OpenAICompatKind::Custom => Some(effort),
-        OpenAICompatKind::DeepSeek => match effort.as_str() {
-            "low" | "medium" | "high" | "xhigh" | "max" => Some(effort),
-            "minimal" => Some("low".to_string()),
-            _ => None,
-        },
-        OpenAICompatKind::XAI | OpenAICompatKind::GLM | OpenAICompatKind::SiliconFlow => None,
-    }
+fn normalized_max_completion_tokens<P: OpenAICompatPolicy>(
+    policy: &P,
+    request: &ChatRequest,
+) -> Option<u32> {
+    let requested = request.max_tokens.filter(|&v| v > 0)?;
+    Some(match policy.max_completion_tokens_cap(request) {
+        Some(cap) => requested.min(cap),
+        None => requested,
+    })
 }
 
-fn use_max_completion_tokens(kind: OpenAICompatKind, request: &ChatRequest) -> bool {
-    match kind {
-        OpenAICompatKind::OpenAI | OpenAICompatKind::Custom => {
-            request.use_max_completion_tokens == Some(true)
-                || request.model.starts_with("o1")
-                || request.model.starts_with("o3")
-                || request.model.starts_with("o4")
-                || request.model.starts_with("gpt-5")
-        }
-        OpenAICompatKind::DeepSeek
-        | OpenAICompatKind::XAI
-        | OpenAICompatKind::GLM
-        | OpenAICompatKind::SiliconFlow => false,
-    }
-}
-
-fn should_suppress_sampling_params(
-    kind: OpenAICompatKind,
-    reasoning: Option<&crate::reasoning::ResolvedReasoning>,
-) -> bool {
-    match kind {
-        OpenAICompatKind::XAI => false,
-        _ => reasoning
-            .is_some_and(|r| active_reasoning_level(&r.level) && r.suppress_sampling_params),
-    }
-}
-
-fn build_request(
-    kind: OpenAICompatKind,
+fn build_request<P: OpenAICompatPolicy>(
+    policy: &P,
     request: &ChatRequest,
     messages: &[ChatMessage],
     stream: bool,
 ) -> OpenAIRequest {
-    let default_style = default_reasoning_style(kind, request);
+    let default_style = policy.default_reasoning_style(request);
     let reasoning = resolve_reasoning(request, default_style);
-    let suppress_sampling_params = should_suppress_sampling_params(kind, reasoning.as_ref());
+    let suppress_sampling_params = policy.suppress_sampling_params(reasoning.as_ref());
     let reasoning_effort = reasoning.as_ref().and_then(|r| {
         let effort = r.reasoning_effort.clone()?;
-        normalize_reasoning_effort(kind, &r.level, effort)
+        policy.normalize_reasoning_effort(&r.level, effort)
     });
-    let enable_thinking = reasoning.as_ref().and_then(|r| match kind {
-        OpenAICompatKind::SiliconFlow => r.enable_thinking,
-        OpenAICompatKind::Custom if r.style == ReasoningStyle::SiliconFlowEnableThinking => {
-            r.enable_thinking
-        }
-        _ => None,
-    });
-    let thinking_budget = reasoning.as_ref().and_then(|r| match kind {
-        OpenAICompatKind::SiliconFlow => r.budget_tokens.filter(|v| *v > 0),
-        OpenAICompatKind::Custom if r.style == ReasoningStyle::SiliconFlowEnableThinking => {
-            r.budget_tokens.filter(|v| *v > 0)
-        }
-        _ => None,
-    });
-    let thinking = if kind == OpenAICompatKind::GLM {
-        reasoning.as_ref().map(|r| GlmThinking {
-            r#type: if active_reasoning_level(&r.level) {
-                "enabled".to_string()
-            } else {
-                "disabled".to_string()
-            },
-            clear_thinking: true,
-        })
-    } else {
-        None
-    };
+    let extra = policy.extra_body_fields(reasoning.as_ref());
 
     // Use max_completion_tokens only when the model/request contract requires it.
-    let use_completion_tokens = use_max_completion_tokens(kind, request);
+    let use_completion_tokens = policy.use_max_completion_tokens(request);
 
     let (max_tokens, max_completion_tokens) = if use_completion_tokens {
-        (None, request.max_tokens.filter(|&v| v > 0))
+        (None, normalized_max_completion_tokens(policy, request))
     } else {
         (request.max_tokens.filter(|&v| v > 0), None)
     };
 
-    let has_tools = request
-        .tools
-        .as_ref()
-        .is_some_and(|tools| !tools.is_empty());
-    let should_include_deepseek_reasoning_content = kind == OpenAICompatKind::DeepSeek
-        && has_tools
-        && messages
-            .iter()
-            .any(|msg| msg.role == "assistant" && msg.reasoning_content.is_some());
+    let include_reasoning_content =
+        policy.include_assistant_reasoning_content(messages, &request.tools);
 
     OpenAIRequest {
         model: request.model.clone(),
-        messages: convert_messages(messages, should_include_deepseek_reasoning_content),
+        messages: convert_messages(messages, include_reasoning_content),
         temperature: if suppress_sampling_params {
             None
         } else {
@@ -681,15 +608,42 @@ fn build_request(
         },
         tools: request.tools.clone(),
         reasoning_effort,
-        enable_thinking,
-        thinking_budget,
-        thinking,
+        extra,
     }
+}
+
+fn extract_error_message(text: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn format_openai_compat_error(
+    error_label: &str,
+    status: reqwest::StatusCode,
+    text: &str,
+) -> String {
+    let upstream_message = extract_error_message(text).unwrap_or_else(|| text.to_string());
+    if upstream_message.contains("max_completion_tokens is too large") {
+        return format!(
+            "{error_label} error {status}: The requested max_completion_tokens is too large. Lower the model Max Tokens parameter to the provider-supported value shown by upstream, or disable Use max_completion_tokens. Do not use the context window size as the output token limit. Upstream: {upstream_message}"
+        );
+    }
+
+    format!("{error_label} error {status}: {text}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deepseek::DeepSeekPolicy;
+    use crate::glm::GLMPolicy;
+    use crate::openai::OpenAIPolicy;
+    use crate::siliconflow::SiliconFlowPolicy;
+    use crate::xai::XAIPolicy;
     use serde_json::json;
 
     fn base_chat_request(model: &str) -> ChatRequest {
@@ -775,12 +729,7 @@ mod tests {
         request.thinking_level = Some("high".to_string());
         request.use_max_completion_tokens = Some(false);
 
-        let body = build_request(
-            OpenAICompatKind::DeepSeek,
-            &request,
-            &request.messages,
-            true,
-        );
+        let body = build_request(&DeepSeekPolicy, &request, &request.messages, true);
 
         assert_eq!(body.max_tokens, Some(300_000));
         assert_eq!(body.max_completion_tokens, None);
@@ -794,12 +743,7 @@ mod tests {
         let mut request = base_chat_request("deepseek-v4-flash");
         request.thinking_level = Some("none".to_string());
 
-        let body = build_request(
-            OpenAICompatKind::DeepSeek,
-            &request,
-            &request.messages,
-            true,
-        );
+        let body = build_request(&DeepSeekPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert!(serialized.get("reasoning_effort").is_none());
@@ -814,20 +758,76 @@ mod tests {
         let mut request = base_chat_request("gpt-4o");
         request.use_max_completion_tokens = Some(true);
 
-        let body = build_request(OpenAICompatKind::OpenAI, &request, &request.messages, true);
+        let body = build_request(&OpenAIPolicy, &request, &request.messages, true);
 
         assert_eq!(body.max_tokens, None);
         assert_eq!(body.max_completion_tokens, Some(300_000));
     }
 
     #[test]
+    fn openai_provider_deepseek_v4_clamps_oversized_completion_tokens() {
+        let mut request = base_chat_request("deepseek-ai/deepseek-v4-pro");
+        request.use_max_completion_tokens = Some(true);
+
+        let body = build_request(&OpenAIPolicy, &request, &request.messages, true);
+
+        assert_eq!(body.max_tokens, None);
+        assert_eq!(body.max_completion_tokens, Some(262_144));
+    }
+
+    #[test]
+    fn oversized_completion_token_error_is_actionable() {
+        let message = OpenAIPolicy.format_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"max_completion_tokens is too large: 300000.This model supports at most 262144 completion tokens.","type":"BadRequestError","param":"","code":400}}"#,
+        );
+
+        assert!(message.contains("max_completion_tokens is too large"));
+        assert!(message.contains("Max Tokens"));
+        assert!(message.contains("Use max_completion_tokens"));
+        assert!(message.contains("262144"));
+    }
+
+    #[test]
     fn openai_reasoning_models_still_use_max_completion_tokens() {
         let request = base_chat_request("o3-mini");
 
-        let body = build_request(OpenAICompatKind::OpenAI, &request, &request.messages, true);
+        let body = build_request(&OpenAIPolicy, &request, &request.messages, true);
 
         assert_eq!(body.max_tokens, None);
         assert_eq!(body.max_completion_tokens, Some(300_000));
+    }
+
+    #[test]
+    fn openai_policy_ignores_nonofficial_thinking_param_style_body_fields() {
+        let mut request = base_chat_request("gpt-4o");
+        request.thinking_level = Some("high".to_string());
+        request.thinking_param_style = Some("enable_thinking".to_string());
+
+        let body = build_request(&OpenAIPolicy, &request, &request.messages, true);
+        let serialized = serde_json::to_value(body).expect("request json");
+
+        assert_eq!(serialized["reasoning_effort"], json!("high"));
+        assert!(serialized.get("enable_thinking").is_none());
+        assert!(serialized.get("thinking_budget").is_none());
+        assert!(serialized.get("thinking").is_none());
+    }
+
+    #[test]
+    fn openai_policy_ignores_nonofficial_reasoning_profile_body_fields() {
+        let mut request = base_chat_request("gpt-4o");
+        request.thinking_level = Some("high".to_string());
+        request.reasoning_profile = Some("enable_thinking".to_string());
+
+        let body = build_request(&OpenAIPolicy, &request, &request.messages, true);
+        let serialized = serde_json::to_value(body).expect("request json");
+
+        assert!(serialized.get("reasoning_effort").is_none());
+        assert!(serialized.get("enable_thinking").is_none());
+        assert!(serialized.get("thinking_budget").is_none());
+        assert!(serialized.get("thinking").is_none());
+        assert_eq!(serialized["temperature"], json!(0.7));
+        assert_eq!(serialized["top_p"], json!(1.0));
     }
 
     #[test]
@@ -843,12 +843,7 @@ mod tests {
         request.tools = Some(vec![dummy_tool()]);
         request.messages = vec![assistant];
 
-        let body = build_request(
-            OpenAICompatKind::DeepSeek,
-            &request,
-            &request.messages,
-            true,
-        );
+        let body = build_request(&DeepSeekPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert_eq!(
@@ -877,12 +872,7 @@ mod tests {
         request.tools = Some(vec![dummy_tool()]);
         request.messages = vec![assistant];
 
-        let body = build_request(
-            OpenAICompatKind::DeepSeek,
-            &request,
-            &request.messages,
-            true,
-        );
+        let body = build_request(&DeepSeekPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert_eq!(
@@ -902,12 +892,7 @@ mod tests {
         let mut request = base_chat_request("deepseek-v4-flash");
         request.messages = vec![assistant];
 
-        let body = build_request(
-            OpenAICompatKind::DeepSeek,
-            &request,
-            &request.messages,
-            true,
-        );
+        let body = build_request(&DeepSeekPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert!(serialized["messages"][0].get("reasoning_content").is_none());
@@ -925,14 +910,14 @@ mod tests {
         request.thinking_level = Some("high".to_string());
         request.messages = vec![assistant];
 
-        let body = build_request(OpenAICompatKind::OpenAI, &request, &request.messages, true);
+        let body = build_request(&OpenAIPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert!(serialized["messages"][0].get("reasoning_content").is_none());
     }
 
     #[test]
-    fn openai_adapter_does_not_apply_deepseek_policy_by_model_name() {
+    fn openai_adapter_does_not_apply_deepseek_reasoning_policy_by_model_name() {
         let assistant: ChatMessage = serde_json::from_value(json!({
             "role": "assistant",
             "content": "final answer",
@@ -943,7 +928,7 @@ mod tests {
         request.thinking_level = Some("high".to_string());
         request.messages = vec![assistant];
 
-        let body = build_request(OpenAICompatKind::OpenAI, &request, &request.messages, true);
+        let body = build_request(&OpenAIPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert!(serialized["messages"][0].get("reasoning_content").is_none());
@@ -954,7 +939,7 @@ mod tests {
         let mut request = base_chat_request("grok-3-mini");
         request.thinking_level = Some("high".to_string());
 
-        let body = build_request(OpenAICompatKind::XAI, &request, &request.messages, true);
+        let body = build_request(&XAIPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert!(serialized.get("reasoning_effort").is_none());
@@ -972,7 +957,7 @@ mod tests {
         request.thinking_level = Some("high".to_string());
         request.reasoning_profile = Some("openai_reasoning_effort".to_string());
 
-        let body = build_request(OpenAICompatKind::XAI, &request, &request.messages, true);
+        let body = build_request(&XAIPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert!(serialized.get("reasoning_effort").is_none());
@@ -985,7 +970,7 @@ mod tests {
         let mut request = base_chat_request("glm-4.6");
         request.thinking_level = Some("high".to_string());
 
-        let body = build_request(OpenAICompatKind::GLM, &request, &request.messages, true);
+        let body = build_request(&GLMPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert_eq!(
@@ -1005,7 +990,7 @@ mod tests {
         let mut request = base_chat_request("glm-4.6");
         request.thinking_level = Some("none".to_string());
 
-        let body = build_request(OpenAICompatKind::GLM, &request, &request.messages, true);
+        let body = build_request(&GLMPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert_eq!(
@@ -1021,12 +1006,7 @@ mod tests {
         let mut request = base_chat_request("Qwen/Qwen3-235B-A22B");
         request.thinking_level = Some("high".to_string());
 
-        let body = build_request(
-            OpenAICompatKind::SiliconFlow,
-            &request,
-            &request.messages,
-            true,
-        );
+        let body = build_request(&SiliconFlowPolicy, &request, &request.messages, true);
         let serialized = serde_json::to_value(body).expect("request json");
 
         assert_eq!(serialized["enable_thinking"], json!(true));
@@ -1040,14 +1020,17 @@ mod tests {
 }
 
 #[async_trait]
-impl ProviderAdapter for OpenAICompatAdapter {
+impl<P> ProviderAdapter for OpenAICompatAdapter<P>
+where
+    P: OpenAICompatPolicy,
+{
     async fn chat(
         &self,
         ctx: &ProviderRequestContext,
         request: ChatRequest,
     ) -> Result<ChatResponse> {
         let url = self.chat_url(ctx);
-        let body = build_request(self.kind, &request, &request.messages, false);
+        let body = build_request(&self.policy, &request, &request.messages, false);
 
         let resp = crate::apply_request_headers(
             self.get_client(ctx)?
@@ -1063,10 +1046,9 @@ impl ProviderAdapter for OpenAICompatAdapter {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(AQBotError::Provider(format!(
-                "{} error {status}: {text}",
-                self.error_label()
-            )));
+            return Err(AQBotError::Provider(
+                self.policy.format_error(status, &text),
+            ));
         }
 
         let oai: OpenAIResponse = resp
@@ -1140,8 +1122,8 @@ impl ProviderAdapter for OpenAICompatAdapter {
         let api_key = ctx.api_key.clone();
         let custom_headers = ctx.custom_headers.clone();
         let url = self.chat_url(ctx);
-        let body = build_request(self.kind, &request, &request.messages, true);
-        let error_label = self.error_label().to_string();
+        let body = build_request(&self.policy, &request, &request.messages, true);
+        let policy = self.policy.clone();
 
         let (tx, rx) = futures::channel::mpsc::unbounded();
 
@@ -1160,9 +1142,8 @@ impl ProviderAdapter for OpenAICompatAdapter {
                 Ok(r) => {
                     let s = r.status();
                     let t = r.text().await.unwrap_or_default();
-                    let _ = tx.unbounded_send(Err(AQBotError::Provider(format!(
-                        "{error_label} error {s}: {t}"
-                    ))));
+                    let _ =
+                        tx.unbounded_send(Err(AQBotError::Provider(policy.format_error(s, &t))));
                     return;
                 }
                 Err(e) => {
@@ -1407,7 +1388,7 @@ impl ProviderAdapter for OpenAICompatAdapter {
             let t = resp.text().await.unwrap_or_default();
             return Err(AQBotError::Provider(format!(
                 "{} error {s}: {t}",
-                self.error_label()
+                self.policy.error_label()
             )));
         }
 
@@ -1530,7 +1511,7 @@ impl ProviderAdapter for OpenAICompatAdapter {
             let t = resp.text().await.unwrap_or_default();
             return Err(AQBotError::Provider(format!(
                 "{} embed error {s}: {t}",
-                self.error_label()
+                self.policy.error_label()
             )));
         }
 
