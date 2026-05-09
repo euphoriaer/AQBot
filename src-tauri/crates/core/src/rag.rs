@@ -8,9 +8,21 @@ use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 
 use crate::error::{AQBotError, Result};
-use crate::types::{RagContextResult, RagRetrievedItem, RagSourceResult};
+use crate::types::{RagContextResult, RagRetrievedItem, RagSourceError, RagSourceResult};
 use crate::vector_store::{EmbeddingRecord, VectorSearchResult, VectorStore};
 use crate::{document_parser, text_chunker};
+
+fn format_rag_failure_message(reason: impl AsRef<str>) -> String {
+    const PREFIX: &str = "检索失败";
+    let reason = reason.as_ref().trim();
+    if reason.is_empty() {
+        return PREFIX.to_string();
+    }
+    if reason.starts_with(PREFIX) {
+        return reason.to_string();
+    }
+    format!("{PREFIX}：{reason}")
+}
 
 // ── Trait ────────────────────────────────────────────────────────────────────
 
@@ -314,6 +326,7 @@ pub async fn collect_rag_context(
 
     let mut context_parts = Vec::new();
     let mut source_results = Vec::new();
+    let mut errors = Vec::new();
 
     for src_ref in &sources {
         let source = src_ref.source();
@@ -426,6 +439,16 @@ pub async fn collect_rag_context(
                                 src_ref.container_id,
                                 e
                             );
+                            let source_type_str = match src_ref.source_type {
+                                RAGSourceType::Knowledge => "knowledge",
+                                RAGSourceType::Memory => "memory",
+                            };
+                            errors.push(RagSourceError {
+                                source_type: source_type_str.to_string(),
+                                container_id: src_ref.container_id.clone(),
+                                message: format_rag_failure_message(format!("重排序失败：{e}")),
+                            });
+                            continue;
                         }
                     }
                 }
@@ -475,6 +498,15 @@ pub async fn collect_rag_context(
                     src_ref.container_id,
                     e
                 );
+                let source_type_str = match src_ref.source_type {
+                    RAGSourceType::Knowledge => "knowledge",
+                    RAGSourceType::Memory => "memory",
+                };
+                errors.push(RagSourceError {
+                    source_type: source_type_str.to_string(),
+                    container_id: src_ref.container_id.clone(),
+                    message: format_rag_failure_message(format!("向量检索失败：{e}")),
+                });
             }
         }
     }
@@ -511,6 +543,7 @@ pub async fn collect_rag_context(
     RagContextResult {
         context_parts,
         source_results,
+        errors,
     }
 }
 

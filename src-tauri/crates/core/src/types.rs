@@ -1042,6 +1042,15 @@ pub struct RagSourceResult {
     pub items: Vec<RagRetrievedItem>,
 }
 
+/// Retrieval failure for a single RAG source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagSourceError {
+    /// "knowledge" or "memory"
+    pub source_type: String,
+    pub container_id: String,
+    pub message: String,
+}
+
 /// Combined results of RAG context collection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RagContextResult {
@@ -1049,6 +1058,9 @@ pub struct RagContextResult {
     pub context_parts: Vec<String>,
     /// Structured results for frontend display.
     pub source_results: Vec<RagSourceResult>,
+    /// Structured failures for frontend display.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<RagSourceError>,
 }
 
 /// Tauri event emitted after RAG context retrieval completes.
@@ -1057,6 +1069,8 @@ pub struct RagContextRetrievedEvent {
     pub conversation_id: String,
     pub message_id: Option<String>,
     pub sources: Vec<RagSourceResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<RagSourceError>,
 }
 
 // === Embedding Types ===

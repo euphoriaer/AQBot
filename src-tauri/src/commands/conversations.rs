@@ -5,9 +5,29 @@ use aqbot_providers::{
 };
 use base64::Engine;
 use sea_orm::*;
+use std::future::Future;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{Emitter, State};
+
+const RAG_CONTEXT_TIMEOUT: Duration = Duration::from_secs(60);
+const RAG_RETRIEVAL_FAILED_PREFIX: &str = "检索失败";
+
+fn format_rag_failure_message(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return RAG_RETRIEVAL_FAILED_PREFIX.to_string();
+    }
+    if reason.starts_with(RAG_RETRIEVAL_FAILED_PREFIX) {
+        return reason.to_string();
+    }
+    format!("{RAG_RETRIEVAL_FAILED_PREFIX}：{reason}")
+}
+
+fn rag_timeout_failure_reason() -> String {
+    format!("检索超时，已超过 {} 秒", RAG_CONTEXT_TIMEOUT.as_secs())
+}
 
 fn provider_type_to_registry_key(pt: &ProviderType) -> &'static str {
     match pt {
@@ -1598,6 +1618,121 @@ fn build_memory_retrieval_tag(sources: &[RagSourceResult]) -> String {
     result
 }
 
+fn rag_source_errors(kb_ids: &[String], mem_ids: &[String], message: &str) -> Vec<RagSourceError> {
+    let mut errors = Vec::with_capacity(kb_ids.len() + mem_ids.len());
+    let message = format_rag_failure_message(message);
+    for id in kb_ids {
+        errors.push(RagSourceError {
+            source_type: "knowledge".to_string(),
+            container_id: id.clone(),
+            message: message.clone(),
+        });
+    }
+    for id in mem_ids {
+        errors.push(RagSourceError {
+            source_type: "memory".to_string(),
+            container_id: id.clone(),
+            message: message.clone(),
+        });
+    }
+    errors
+}
+
+fn failed_rag_context(kb_ids: &[String], mem_ids: &[String], message: &str) -> RagContextResult {
+    RagContextResult {
+        context_parts: Vec::new(),
+        source_results: Vec::new(),
+        errors: rag_source_errors(kb_ids, mem_ids, message),
+    }
+}
+
+async fn wait_for_cancel(cancel_flag: &AtomicBool) {
+    while !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn collect_rag_context_with_timeout<F>(
+    future: F,
+    timeout: Duration,
+    kb_ids: &[String],
+    mem_ids: &[String],
+) -> RagContextResult
+where
+    F: Future<Output = RagContextResult>,
+{
+    match tokio::time::timeout(timeout, future).await {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!("RAG context collection timed out after {:?}", timeout);
+            let reason = rag_timeout_failure_reason();
+            failed_rag_context(kb_ids, mem_ids, &reason)
+        }
+    }
+}
+
+async fn collect_rag_context_with_timeout_or_cancel<F>(
+    future: F,
+    timeout: Duration,
+    cancel_flag: &AtomicBool,
+    kb_ids: &[String],
+    mem_ids: &[String],
+) -> (RagContextResult, bool)
+where
+    F: Future<Output = RagContextResult>,
+{
+    tokio::select! {
+        result = collect_rag_context_with_timeout(future, timeout, kb_ids, mem_ids) => (result, false),
+        _ = wait_for_cancel(cancel_flag) => (
+            failed_rag_context(kb_ids, mem_ids, "已停止生成"),
+            true,
+        ),
+    }
+}
+
+async fn collect_and_emit_rag_context(
+    app: &tauri::AppHandle,
+    db: &DatabaseConnection,
+    master_key: &[u8; 32],
+    vector_store: &aqbot_core::vector_store::VectorStore,
+    conversation_id: &str,
+    assistant_message_id: &str,
+    query: &str,
+    kb_ids: Vec<String>,
+    mem_ids: Vec<String>,
+    cancel_flag: &AtomicBool,
+) -> (RagContextResult, bool) {
+    let future = crate::indexing::collect_rag_context(
+        db,
+        master_key,
+        vector_store,
+        &kb_ids,
+        &mem_ids,
+        query,
+        5,
+    );
+    let (rag_result, cancelled) = collect_rag_context_with_timeout_or_cancel(
+        future,
+        RAG_CONTEXT_TIMEOUT,
+        cancel_flag,
+        &kb_ids,
+        &mem_ids,
+    )
+    .await;
+
+    let _ = app.emit(
+        "rag-context-retrieved",
+        RagContextRetrievedEvent {
+            conversation_id: conversation_id.to_string(),
+            message_id: Some(assistant_message_id.to_string()),
+            sources: rag_result.source_results.clone(),
+            errors: rag_result.errors.clone(),
+        },
+    );
+
+    (rag_result, cancelled)
+}
+
 /// Spawn the streaming background task shared by send_message and regenerate_message.
 /// Returns the assistant message_id that will be populated as chunks arrive.
 fn spawn_stream_task(
@@ -2234,33 +2369,41 @@ pub async fn send_message(
     // 5. Generate assistant message ID upfront so early RAG events can target
     // the same assistant row that the stream will later update.
     let assistant_message_id = aqbot_core::utils::gen_id();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    state
+        .stream_cancel_flags
+        .lock()
+        .await
+        .insert(conversation_id.clone(), cancel_flag.clone());
 
     // RAG retrieval: search enabled knowledge bases and memory namespaces
     let kb_ids = enabled_knowledge_base_ids.unwrap_or_default();
     let mem_ids = enabled_memory_namespace_ids.unwrap_or_default();
-    let rag_result = crate::indexing::collect_rag_context(
+    let (rag_result, rag_cancelled) = collect_and_emit_rag_context(
+        &app,
         &state.sea_db,
         &state.master_key,
-        &state.vector_store,
-        &kb_ids,
-        &mem_ids,
+        state.vector_store.as_ref(),
+        &conversation_id,
+        &assistant_message_id,
         &content,
-        5,
+        kb_ids,
+        mem_ids,
+        &cancel_flag,
     )
     .await;
 
     // Build memory retrieval tag for persistence before moving source_results
     let memory_tag = build_memory_retrieval_tag(&rag_result.source_results);
 
-    // Always emit RAG results to frontend so it can replace the searching indicator
-    let _ = app.emit(
-        "rag-context-retrieved",
-        RagContextRetrievedEvent {
-            conversation_id: conversation_id.clone(),
-            message_id: Some(assistant_message_id.clone()),
-            sources: rag_result.source_results,
-        },
-    );
+    if rag_cancelled {
+        state
+            .stream_cancel_flags
+            .lock()
+            .await
+            .remove(&conversation_id);
+        return Ok(user_message);
+    }
 
     if !rag_result.context_parts.is_empty() {
         chat_messages.push(ChatMessage {
@@ -2459,12 +2602,6 @@ pub async fn send_message(
     }
 
     let user_msg_id = user_message.id.clone();
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    state
-        .stream_cancel_flags
-        .lock()
-        .await
-        .insert(conversation_id.clone(), cancel_flag.clone());
     spawn_stream_task(
         app,
         state.sea_db.clone(),
@@ -2625,33 +2762,32 @@ pub async fn regenerate_message(
 
     // 7. Spawn streaming with new version
     let assistant_message_id = aqbot_core::utils::gen_id();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    state
+        .stream_cancel_flags
+        .lock()
+        .await
+        .insert(conversation_id.clone(), cancel_flag.clone());
 
     // RAG retrieval for regeneration
     let memory_tag = {
         let kb_ids = enabled_knowledge_base_ids.unwrap_or_default();
         let mem_ids = enabled_memory_namespace_ids.unwrap_or_default();
-        let rag_result = crate::indexing::collect_rag_context(
+        let (rag_result, rag_cancelled) = collect_and_emit_rag_context(
+            &app,
             &state.sea_db,
             &state.master_key,
-            &state.vector_store,
-            &kb_ids,
-            &mem_ids,
+            state.vector_store.as_ref(),
+            &conversation_id,
+            &assistant_message_id,
             &last_user_msg.content,
-            5,
+            kb_ids,
+            mem_ids,
+            &cancel_flag,
         )
         .await;
 
         let tag = build_memory_retrieval_tag(&rag_result.source_results);
-
-        // Always emit so frontend can replace the searching indicator
-        let _ = app.emit(
-            "rag-context-retrieved",
-            RagContextRetrievedEvent {
-                conversation_id: conversation_id.clone(),
-                message_id: Some(assistant_message_id.clone()),
-                sources: rag_result.source_results,
-            },
-        );
 
         if !rag_result.context_parts.is_empty() {
             chat_messages.push(ChatMessage {
@@ -2664,6 +2800,14 @@ pub async fn regenerate_message(
                 tool_calls: None,
                 tool_call_id: None,
             });
+        }
+        if rag_cancelled {
+            state
+                .stream_cancel_flags
+                .lock()
+                .await
+                .remove(&conversation_id);
+            return Ok(());
         }
         tag
     };
@@ -2791,12 +2935,6 @@ pub async fn regenerate_message(
         }
     }
 
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    state
-        .stream_cancel_flags
-        .lock()
-        .await
-        .insert(conversation_id.clone(), cancel_flag.clone());
     spawn_stream_task(
         app,
         state.sea_db.clone(),
@@ -2947,33 +3085,32 @@ pub async fn regenerate_with_model(
     }
 
     let assistant_message_id = aqbot_core::utils::gen_id();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    state
+        .stream_cancel_flags
+        .lock()
+        .await
+        .insert(conversation_id.clone(), cancel_flag.clone());
 
     // RAG retrieval
     let memory_tag = {
         let kb_ids = enabled_knowledge_base_ids.unwrap_or_default();
         let mem_ids = enabled_memory_namespace_ids.unwrap_or_default();
-        let rag_result = crate::indexing::collect_rag_context(
+        let (rag_result, rag_cancelled) = collect_and_emit_rag_context(
+            &app,
             &state.sea_db,
             &state.master_key,
-            &state.vector_store,
-            &kb_ids,
-            &mem_ids,
+            state.vector_store.as_ref(),
+            &conversation_id,
+            &assistant_message_id,
             &user_msg.content,
-            5,
+            kb_ids,
+            mem_ids,
+            &cancel_flag,
         )
         .await;
 
         let tag = build_memory_retrieval_tag(&rag_result.source_results);
-
-        // Always emit so frontend can replace the searching indicator
-        let _ = app.emit(
-            "rag-context-retrieved",
-            RagContextRetrievedEvent {
-                conversation_id: conversation_id.clone(),
-                message_id: Some(assistant_message_id.clone()),
-                sources: rag_result.source_results,
-            },
-        );
 
         if !rag_result.context_parts.is_empty() {
             chat_messages.push(ChatMessage {
@@ -2986,6 +3123,14 @@ pub async fn regenerate_with_model(
                 tool_calls: None,
                 tool_call_id: None,
             });
+        }
+        if rag_cancelled {
+            state
+                .stream_cancel_flags
+                .lock()
+                .await
+                .remove(&conversation_id);
+            return Ok(());
         }
         tag
     };
@@ -3103,13 +3248,6 @@ pub async fn regenerate_with_model(
             }
         }
     }
-
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    state
-        .stream_cancel_flags
-        .lock()
-        .await
-        .insert(conversation_id.clone(), cancel_flag.clone());
 
     // Pre-create the placeholder message BEFORE spawning the stream task so that
     // the frontend can immediately discover it via listMessageVersions and enable
@@ -3603,9 +3741,11 @@ pub async fn send_system_message(
 mod tests {
     use super::*;
     use std::fs;
+    use std::future::pending;
     use std::io::{Cursor, Write};
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+    use std::time::Duration;
     use tokio::sync::Mutex;
 
     fn test_conversation(
@@ -3674,6 +3814,27 @@ mod tests {
         )
         .unwrap();
         archive.finish().unwrap().into_inner()
+    }
+
+    #[tokio::test]
+    async fn rag_context_timeout_returns_failure_errors() {
+        let result = collect_rag_context_with_timeout(
+            pending(),
+            Duration::from_millis(1),
+            &["kb-1".to_string()],
+            &["mem-1".to_string()],
+        )
+        .await;
+
+        assert!(result.context_parts.is_empty());
+        assert!(result.source_results.is_empty());
+        assert_eq!(result.errors.len(), 2);
+        assert_eq!(result.errors[0].source_type, "knowledge");
+        assert_eq!(result.errors[0].container_id, "kb-1");
+        assert_eq!(result.errors[0].message, "检索失败：检索超时，已超过 60 秒");
+        assert_eq!(result.errors[1].source_type, "memory");
+        assert_eq!(result.errors[1].container_id, "mem-1");
+        assert_eq!(result.errors[1].message, "检索失败：检索超时，已超过 60 秒");
     }
 
     #[tokio::test]

@@ -15,10 +15,31 @@ export interface MemorySourceResult {
   items: MemoryRetrievedItem[];
 }
 
+export interface RagSourceError {
+  source_type: 'knowledge' | 'memory';
+  container_id: string;
+  message: string;
+}
+
 export interface RagContextRetrievedEvent {
   conversation_id: string;
   message_id?: string | null;
   sources: MemorySourceResult[];
+  errors?: RagSourceError[];
+}
+
+function escapeTagText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function formatRagFailureMessage(message?: string): string {
+  const reason = message?.trim() ?? '';
+  if (!reason) return '检索失败';
+  if (reason.startsWith('检索失败')) return reason;
+  return `检索失败：${reason}`;
 }
 
 /**
@@ -26,13 +47,14 @@ export interface RagContextRetrievedEvent {
  */
 export function buildKnowledgeTag(
   status: 'searching' | 'done' | 'error',
-  sources?: MemorySourceResult[],
+  sources?: MemorySourceResult[] | string,
 ): string {
   if (status === 'searching') {
     return '<knowledge-retrieval status="searching" data-aqbot="1"></knowledge-retrieval>';
   }
   if (status === 'error') {
-    return '<knowledge-retrieval status="error" data-aqbot="1"></knowledge-retrieval>';
+    const message = formatRagFailureMessage(typeof sources === 'string' ? sources : '');
+    return `<knowledge-retrieval status="error" data-aqbot="1">${escapeTagText(message)}</knowledge-retrieval>`;
   }
   const json = JSON.stringify(sources ?? []);
   return `<knowledge-retrieval status="done" data-aqbot="1">\n${json}\n</knowledge-retrieval>\n\n`;
@@ -43,13 +65,14 @@ export function buildKnowledgeTag(
  */
 export function buildMemoryTag(
   status: 'searching' | 'done' | 'error',
-  sources?: MemorySourceResult[],
+  sources?: MemorySourceResult[] | string,
 ): string {
   if (status === 'searching') {
     return '<memory-retrieval status="searching" data-aqbot="1"></memory-retrieval>';
   }
   if (status === 'error') {
-    return '<memory-retrieval status="error" data-aqbot="1"></memory-retrieval>';
+    const message = formatRagFailureMessage(typeof sources === 'string' ? sources : '');
+    return `<memory-retrieval status="error" data-aqbot="1">${escapeTagText(message)}</memory-retrieval>`;
   }
   const json = JSON.stringify(sources ?? []);
   return `<memory-retrieval status="done" data-aqbot="1">\n${json}\n</memory-retrieval>\n\n`;

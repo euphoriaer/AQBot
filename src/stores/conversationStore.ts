@@ -331,12 +331,25 @@ function mergeIncomingDisplayChunk(currentContent: string, incomingContent: stri
   return updated + nonRagPrefix + body;
 }
 
-function buildRagDisplayTagFromSources(sources: RagContextRetrievedEvent['sources']): string {
+function buildRagDisplayTagFromSources(
+  sources: RagContextRetrievedEvent['sources'],
+  errors: RagContextRetrievedEvent['errors'] = [],
+): string {
   const knowledgeSources = sources.filter(s => s.source_type === 'knowledge');
   const memorySources = sources.filter(s => s.source_type === 'memory');
+  const knowledgeErrors = errors.filter(e => e.source_type === 'knowledge');
+  const memoryErrors = errors.filter(e => e.source_type === 'memory');
   return [
-    knowledgeSources.length > 0 ? buildKnowledgeTag('done', knowledgeSources) : '',
-    memorySources.length > 0 ? buildMemoryTag('done', memorySources) : '',
+    knowledgeSources.length > 0
+      ? buildKnowledgeTag('done', knowledgeSources)
+      : knowledgeErrors.length > 0
+        ? buildKnowledgeTag('error', knowledgeErrors[0].message)
+        : '',
+    memorySources.length > 0
+      ? buildMemoryTag('done', memorySources)
+      : memoryErrors.length > 0
+        ? buildMemoryTag('error', memoryErrors[0].message)
+        : '',
   ].join('');
 }
 
@@ -2892,8 +2905,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const ragUnsub = await listen<RagContextRetrievedEvent>('rag-context-retrieved', (event) => {
       if (_listenerGen !== gen) return;
       if (!get().streaming) return;
-      const { conversation_id, message_id, sources } = event.payload;
-      const displayTag = buildRagDisplayTagFromSources(sources);
+      const { conversation_id, message_id, sources, errors } = event.payload;
+      const displayTag = buildRagDisplayTagFromSources(sources, errors);
 
       // Update UI immediately
       if (get().activeConversationId === conversation_id) {
