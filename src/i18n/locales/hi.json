@@ -408,6 +408,8 @@
     "chatMinimapFaq": "प्रश्न सूचकांक",
     "chatMinimapSticky": "फ़्लोटिंग संकेतक",
     "additionalFeatures": "अतिरिक्त सुविधाएँ",
+    "documentAttachmentReading": "दस्तावेज़ अटैचमेंट पढ़ें",
+    "documentAttachmentReadingDesc": "चालू होने पर PDF, DOC और DOCX अटैचमेंट टेक्स्ट में पार्स होकर मॉडल को भेजे जाते हैं। इन्हें नॉलेज बेस में नहीं जोड़ा जाता।",
     "showImageModelsInModelSelector": "मॉडल चयनकर्ता में छवि मॉडल दिखाएँ",
     "multiModelDisplayMode": "मल्टी-मॉडल प्रदर्शन मोड",
     "multiModelDisplayModeDesc": "मल्टी-मॉडल प्रतिक्रियाओं का लेआउट सेट करें",

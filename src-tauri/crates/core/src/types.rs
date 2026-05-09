@@ -700,6 +700,8 @@ pub struct AppSettings {
     /// Chat minimap / navigation overlay.
     pub chat_minimap_enabled: bool,
     pub chat_minimap_style: String,
+    /// Parse PDF/DOC/DOCX attachments and include their text in chat prompts.
+    pub document_attachment_reading_enabled: bool,
     /// Include image models in the conversation model selector.
     pub show_image_models_in_model_selector: bool,
     /// Multi-model response display mode: "tabs" | "side-by-side" | "stacked".
@@ -803,6 +805,7 @@ impl Default for AppSettings {
             default_system_prompt: None,
             chat_minimap_enabled: false,
             chat_minimap_style: "faq".to_string(),
+            document_attachment_reading_enabled: false,
             show_image_models_in_model_selector: false,
             multi_model_display_mode: "tabs".to_string(),
             render_user_markdown: false,
@@ -832,6 +835,16 @@ mod app_settings_tests {
         let settings: AppSettings =
             serde_json::from_value(json!({})).expect("settings should default missing fields");
         assert!(!settings.release_webview_on_tray);
+    }
+
+    #[test]
+    fn document_attachment_reading_defaults_to_false_for_missing_settings() {
+        let settings = AppSettings::default();
+        assert!(!settings.document_attachment_reading_enabled);
+
+        let settings: AppSettings =
+            serde_json::from_value(json!({})).expect("settings should default missing fields");
+        assert!(!settings.document_attachment_reading_enabled);
     }
 }
 

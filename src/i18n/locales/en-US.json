@@ -408,6 +408,8 @@
     "chatMinimapFaq": "Question Index",
     "chatMinimapSticky": "Sticky Indicator",
     "additionalFeatures": "Additional Features",
+    "documentAttachmentReading": "Read document attachments",
+    "documentAttachmentReadingDesc": "When enabled, PDF, DOC, and DOCX attachments are parsed into text and sent to the model. They are not added to knowledge bases.",
     "showImageModelsInModelSelector": "Show image models in model selector",
     "multiModelDisplayMode": "Multi-Model Display",
     "multiModelDisplayModeDesc": "Choose how multi-model responses are displayed",

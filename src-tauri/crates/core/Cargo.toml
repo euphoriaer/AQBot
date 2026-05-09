@@ -27,6 +27,7 @@ sqlite-vec = { workspace = true }
 libsqlite3-sys = { workspace = true }
 pdf-extract = "0.7"
 zip = "2"
+litchi = "0.0.1"
 dirs = "5"
 aqbot-migration = { path = "../migration" }
 

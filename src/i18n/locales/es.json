@@ -408,6 +408,8 @@
     "chatMinimapFaq": "Índice de preguntas",
     "chatMinimapSticky": "Indicador flotante",
     "additionalFeatures": "Funciones adicionales",
+    "documentAttachmentReading": "Leer documentos adjuntos",
+    "documentAttachmentReadingDesc": "Al activarlo, los adjuntos PDF, DOC y DOCX se analizan como texto y se envían al modelo. No se añaden a la base de conocimientos.",
     "showImageModelsInModelSelector": "Mostrar modelos de imagen en el selector de modelos",
     "multiModelDisplayMode": "Modo de visualización multimodelo",
     "multiModelDisplayModeDesc": "Configurar el diseño para respuestas de múltiples modelos",

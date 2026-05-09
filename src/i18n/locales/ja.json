@@ -408,6 +408,8 @@
     "chatMinimapFaq": "質問インデックス",
     "chatMinimapSticky": "フローティングインジケーター",
     "additionalFeatures": "追加機能",
+    "documentAttachmentReading": "ドキュメント添付を読み取る",
+    "documentAttachmentReadingDesc": "有効にすると、PDF、DOC、DOCX 添付がテキストとして解析されモデルへ送信されます。ナレッジベースには追加されません。",
     "showImageModelsInModelSelector": "モデルセレクターに画像モデルを表示",
     "multiModelDisplayMode": "マルチモデル表示モード",
     "multiModelDisplayModeDesc": "マルチモデル回答時のレイアウトを設定",

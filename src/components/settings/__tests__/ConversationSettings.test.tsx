@@ -16,6 +16,8 @@ vi.mock('react-i18next', () => ({
       const labels: Record<string, string> = {
         'settings.additionalFeatures': '附加功能',
         'settings.chatMinimap': '对话导航',
+        'settings.documentAttachmentReading': '读取文档附件',
+        'settings.documentAttachmentReadingDesc': '开启后，PDF、DOC、DOCX 附件会解析为文本并发送给模型，不会加入知识库。',
         'settings.showImageModelsInModelSelector': '模型选择器中显示绘画模型',
       };
       return labels[key] ?? fallback ?? key;
@@ -97,6 +99,7 @@ describe('ConversationSettings', () => {
       default_system_prompt: null,
       multi_model_display_mode: 'tabs',
       render_user_markdown: false,
+      document_attachment_reading_enabled: false,
       show_image_models_in_model_selector: false,
     };
   });
@@ -108,6 +111,22 @@ describe('ConversationSettings', () => {
     expect(text.indexOf('对话导航')).toBeGreaterThanOrEqual(0);
     expect(text.indexOf('附加功能')).toBeGreaterThan(text.indexOf('对话导航'));
     expect(screen.getByText('模型选择器中显示绘画模型')).toBeInTheDocument();
+    expect(screen.getByText('读取文档附件')).toBeInTheDocument();
+    expect(screen.getByText('开启后，PDF、DOC、DOCX 附件会解析为文本并发送给模型，不会加入知识库。')).toBeInTheDocument();
+  });
+
+  it('saves the document attachment reading setting when toggled', () => {
+    render(<ConversationSettings />);
+
+    const additionalGroup = screen.getByText('附加功能').parentElement?.parentElement;
+    expect(additionalGroup).not.toBeNull();
+    const toggles = within(additionalGroup as HTMLElement).getAllByRole('switch');
+
+    fireEvent.click(toggles[0]);
+
+    expect(mocks.saveSettings).toHaveBeenCalledWith({
+      document_attachment_reading_enabled: true,
+    });
   });
 
   it('saves the image-model selector setting when toggled', () => {
@@ -115,9 +134,9 @@ describe('ConversationSettings', () => {
 
     const additionalGroup = screen.getByText('附加功能').parentElement?.parentElement;
     expect(additionalGroup).not.toBeNull();
-    const toggle = within(additionalGroup as HTMLElement).getByRole('switch');
+    const toggles = within(additionalGroup as HTMLElement).getAllByRole('switch');
 
-    fireEvent.click(toggle);
+    fireEvent.click(toggles[1]);
 
     expect(mocks.saveSettings).toHaveBeenCalledWith({
       show_image_models_in_model_selector: true,
@@ -134,9 +153,9 @@ describe('ConversationSettings', () => {
 
     const additionalGroup = screen.getByText('附加功能').parentElement?.parentElement;
     expect(additionalGroup).not.toBeNull();
-    const toggle = within(additionalGroup as HTMLElement).getByRole('switch');
+    const toggles = within(additionalGroup as HTMLElement).getAllByRole('switch');
 
-    fireEvent.click(toggle);
+    fireEvent.click(toggles[1]);
 
     expect(mocks.saveSettings).toHaveBeenCalledWith({
       show_image_models_in_model_selector: false,

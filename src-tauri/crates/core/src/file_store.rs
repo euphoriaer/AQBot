@@ -79,7 +79,7 @@ impl FileStore {
         Ok(())
     }
 
-    fn resolve_path(&self, storage_path: &str) -> PathBuf {
+    pub fn resolve_path(&self, storage_path: &str) -> PathBuf {
         self.base_dir.join(storage_path)
     }
 

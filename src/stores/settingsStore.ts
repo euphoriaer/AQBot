@@ -84,6 +84,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   default_system_prompt: null,
   chat_minimap_enabled: false,
   chat_minimap_style: 'faq',
+  document_attachment_reading_enabled: false,
   show_image_models_in_model_selector: false,
   multi_model_display_mode: 'tabs',
   render_user_markdown: false,

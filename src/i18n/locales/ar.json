@@ -408,6 +408,8 @@
     "chatMinimapFaq": "فهرس الأسئلة",
     "chatMinimapSticky": "مؤشر عائم",
     "additionalFeatures": "ميزات إضافية",
+    "documentAttachmentReading": "قراءة مرفقات المستندات",
+    "documentAttachmentReadingDesc": "عند التفعيل، يتم تحليل مرفقات PDF وDOC وDOCX كنص وإرسالها إلى النموذج. لن تتم إضافتها إلى قاعدة المعرفة.",
     "showImageModelsInModelSelector": "إظهار نماذج الصور في محدد النماذج",
     "multiModelDisplayMode": "وضع عرض النماذج المتعددة",
     "multiModelDisplayModeDesc": "تعيين تخطيط الاستجابات متعددة النماذج",

@@ -26,6 +26,39 @@ import type { AttachmentInput, ProviderType, RealtimeConfig } from '@/types';
 import { invoke } from '@/lib/invoke';
 import { open } from '@tauri-apps/plugin-dialog';
 
+const DOCUMENT_ATTACHMENT_ACCEPT = [
+  '.pdf',
+  '.doc',
+  '.docx',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+].join(',');
+
+const DOCUMENT_ATTACHMENT_MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+function getAttachmentMimeType(fileName: string, mimeType?: string): string {
+  if (mimeType) return mimeType;
+  const extension = fileName.split('.').pop()?.toLowerCase() || '';
+  return DOCUMENT_ATTACHMENT_MIME_BY_EXTENSION[extension] || 'application/octet-stream';
+}
+
+function isAllowedAttachmentFile(
+  fileName: string,
+  mimeType: string | undefined,
+  hasVision: boolean,
+  documentAttachmentReadingEnabled: boolean,
+): boolean {
+  const effectiveMimeType = getAttachmentMimeType(fileName, mimeType);
+  if (hasVision && effectiveMimeType.startsWith('image/')) return true;
+  if (!documentAttachmentReadingEnabled) return false;
+  return Object.values(DOCUMENT_ATTACHMENT_MIME_BY_EXTENSION).includes(effectiveMimeType);
+}
+
 async function fileToAttachmentInput(file: File): Promise<AttachmentInput> {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -33,7 +66,7 @@ async function fileToAttachmentInput(file: File): Promise<AttachmentInput> {
       const base64 = (reader.result as string).split(',')[1] || '';
       resolve({
         file_name: file.name,
-        file_type: file.type || 'application/octet-stream',
+        file_type: getAttachmentMimeType(file.name, file.type),
         file_size: file.size,
         data: base64,
       });
@@ -683,6 +716,12 @@ export function InputArea() {
     hasReasoning: supportsReasoning(currentModel),
     hasVision: modelHasCapability(currentModel, 'Vision'),
   }), [activeConversation, currentModel, providers]);
+  const documentAttachmentReadingEnabled = settings.document_attachment_reading_enabled ?? false;
+  const canAttachFiles = hasVision || documentAttachmentReadingEnabled;
+  const fileInputAccept = [
+    hasVision ? 'image/*' : null,
+    documentAttachmentReadingEnabled ? DOCUMENT_ATTACHMENT_ACCEPT : null,
+  ].filter(Boolean).join(',');
 
   // Current model key for excluding from multi-select (no longer used - users can select any model)
 
@@ -866,39 +905,57 @@ export function InputArea() {
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      setAttachedFiles((prev) => [...prev, ...Array.from(files)]);
+      const allowedFiles = Array.from(files).filter((file) =>
+        isAllowedAttachmentFile(
+          file.name,
+          file.type,
+          hasVision,
+          documentAttachmentReadingEnabled,
+        ),
+      );
+      setAttachedFiles((prev) => [...prev, ...allowedFiles]);
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, []);
+  }, [documentAttachmentReadingEnabled, hasVision]);
 
   const removeFile = useCallback((index: number) => {
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!hasVision) return;
+    if (!canAttachFiles) return;
     const items = e.clipboardData?.items;
     if (!items) return;
     const files: File[] = [];
     for (const item of items) {
       if (item.kind === 'file') {
         const file = item.getAsFile();
-        if (file) files.push(file);
+        if (
+          file &&
+          isAllowedAttachmentFile(
+            file.name,
+            file.type,
+            hasVision,
+            documentAttachmentReadingEnabled,
+          )
+        ) {
+          files.push(file);
+        }
       }
     }
     if (files.length > 0) {
       e.preventDefault();
       setAttachedFiles((prev) => [...prev, ...files]);
     }
-  }, [hasVision]);
+  }, [canAttachFiles, documentAttachmentReadingEnabled, hasVision]);
 
   // Drag-and-drop overlay (Tauri native)
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
-    if (!hasVision) return;
+    if (!canAttachFiles) return;
 
     let unlisten: (() => void) | undefined;
 
@@ -924,13 +981,26 @@ export function InputArea() {
                 png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
                 gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
                 bmp: 'image/bmp', ico: 'image/x-icon',
-                pdf: 'application/pdf', txt: 'text/plain',
+                pdf: 'application/pdf',
+                doc: 'application/msword',
+                docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                txt: 'text/plain',
                 json: 'application/json', csv: 'text/csv',
                 md: 'text/markdown', html: 'text/html',
                 js: 'text/javascript', ts: 'text/typescript',
                 zip: 'application/zip',
               };
               const mimeType = mimeMap[ext] || 'application/octet-stream';
+              if (
+                !isAllowedAttachmentFile(
+                  fileName,
+                  mimeType,
+                  hasVision,
+                  documentAttachmentReadingEnabled,
+                )
+              ) {
+                continue;
+              }
               const bytes = await readFile(filePath);
               files.push(new File([bytes], fileName, { type: mimeType }));
             } catch (err) {
@@ -947,7 +1017,7 @@ export function InputArea() {
     return () => {
       unlisten?.();
     };
-  }, [hasVision]);
+  }, [canAttachFiles, documentAttachmentReadingEnabled, hasVision]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1093,6 +1163,7 @@ export function InputArea() {
         ref={fileInputRef}
         type="file"
         multiple
+        accept={fileInputAccept}
         style={{ display: 'none' }}
         onChange={handleFileChange}
       />
@@ -1289,9 +1360,10 @@ export function InputArea() {
                 </Tooltip>
               </Dropdown>
             )}
-            {hasVision && (
+            {canAttachFiles && (
               <Tooltip title={t('chat.attachFile')}>
                 <Button
+                  aria-label={t('chat.attachFile')}
                   type="text"
                   size="small"
                   icon={<Paperclip size={14} />}

@@ -2002,6 +2002,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         prompt: content,
         providerId,
         modelId,
+        attachments: attachments ?? [],
       });
 
       // Wait for agent-done or agent-error event

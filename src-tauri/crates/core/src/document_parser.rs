@@ -12,6 +12,9 @@ pub fn extract_text(file_path: &Path, mime_type: &str) -> Result<String> {
         // PDF
         "application/pdf" => extract_pdf(file_path),
 
+        // Legacy Word document
+        "application/msword" => extract_word_document(file_path),
+
         // DOCX — basic XML extraction without external crate
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
             extract_docx(file_path)
@@ -36,6 +39,15 @@ fn extract_pdf(file_path: &Path) -> Result<String> {
 
     pdf_extract::extract_text_from_mem(&bytes)
         .map_err(|e| AQBotError::Provider(format!("Failed to extract PDF text: {e}")))
+}
+
+/// Extract text from Word documents using litchi.
+fn extract_word_document(file_path: &Path) -> Result<String> {
+    let document = litchi::Document::open(file_path)
+        .map_err(|e| AQBotError::Provider(format!("Failed to open Word document: {e}")))?;
+    document
+        .text()
+        .map_err(|e| AQBotError::Provider(format!("Failed to extract Word document text: {e}")))
 }
 
 /// Extract text from DOCX by reading the internal XML.
@@ -91,7 +103,12 @@ fn extract_text_from_xml(xml: &str) -> String {
 
 /// Determine the MIME type from a file extension.
 pub fn mime_from_extension(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
         "txt" => "text/plain",
         "md" | "markdown" => "text/markdown",
         "csv" => "text/csv",
@@ -99,7 +116,19 @@ pub fn mime_from_extension(path: &Path) -> &'static str {
         "xml" => "text/xml",
         "json" => "application/json",
         "pdf" => "application/pdf",
+        "doc" => "application/msword",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         _ => "text/plain",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn mime_from_extension_detects_legacy_word_documents() {
+        assert_eq!(mime_from_extension(Path::new("report.doc")), "application/msword");
     }
 }

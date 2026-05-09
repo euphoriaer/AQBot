@@ -105,7 +105,7 @@ fn resolve_chat_model_params(
     }
 }
 
-async fn persist_attachments(
+pub(crate) async fn persist_attachments(
     state: &AppState,
     conversation_id: &str,
     attachments: &[AttachmentInput],
@@ -361,9 +361,153 @@ fn strip_display_tags(content: &str) -> String {
     }
 }
 
+const DOCUMENT_ATTACHMENT_UNKNOWN_CONTEXT_CHAR_LIMIT: usize = 48_000;
+const DOCUMENT_ATTACHMENT_MIN_CONTEXT_CHAR_LIMIT: usize = 12_000;
+const DOCUMENT_ATTACHMENT_MAX_CONTEXT_CHAR_LIMIT: usize = 96_000;
+
+fn document_attachment_char_limit(model_context_window: Option<u32>) -> usize {
+    model_context_window
+        .map(|tokens| (tokens as usize).saturating_mul(2))
+        .unwrap_or(DOCUMENT_ATTACHMENT_UNKNOWN_CONTEXT_CHAR_LIMIT)
+        .clamp(
+            DOCUMENT_ATTACHMENT_MIN_CONTEXT_CHAR_LIMIT,
+            DOCUMENT_ATTACHMENT_MAX_CONTEXT_CHAR_LIMIT,
+        )
+}
+
+fn attachment_effective_mime_type(attachment: &Attachment) -> String {
+    if !attachment.file_type.is_empty() && attachment.file_type != "application/octet-stream" {
+        return attachment.file_type.clone();
+    }
+    aqbot_core::document_parser::mime_from_extension(std::path::Path::new(&attachment.file_name))
+        .to_string()
+}
+
+fn is_supported_document_attachment(attachment: &Attachment) -> bool {
+    matches!(
+        attachment_effective_mime_type(attachment).as_str(),
+        "application/pdf"
+            | "application/msword"
+            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+}
+
+fn truncate_to_char_limit(text: &str, limit: usize) -> (String, bool) {
+    let mut out = String::new();
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= limit {
+            return (out, true);
+        }
+        out.push(ch);
+    }
+    (out, false)
+}
+
+fn read_document_attachment_text(
+    file_store: &aqbot_core::file_store::FileStore,
+    attachment: &Attachment,
+) -> aqbot_core::error::Result<Option<String>> {
+    let mime_type = attachment_effective_mime_type(attachment);
+    if attachment.file_path.is_empty() {
+        let Some(data) = attachment.data.as_ref() else {
+            return Ok(None);
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| {
+                aqbot_core::error::AQBotError::Validation(format!(
+                    "Invalid attachment base64 for {}: {}",
+                    attachment.file_name, e
+                ))
+            })?;
+        let extension = std::path::Path::new(&attachment.file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("tmp");
+        let temp_path = std::env::temp_dir().join(format!(
+            "aqbot-doc-{}.{}",
+            aqbot_core::utils::gen_id(),
+            extension
+        ));
+        std::fs::write(&temp_path, bytes)?;
+        let result = aqbot_core::document_parser::extract_text(&temp_path, &mime_type);
+        let _ = std::fs::remove_file(&temp_path);
+        return result.map(Some);
+    }
+
+    let path = file_store.resolve_path(&attachment.file_path);
+    if !path.exists() {
+        return Ok(None);
+    }
+    aqbot_core::document_parser::extract_text(&path, &mime_type).map(Some)
+}
+
+pub(crate) fn append_document_attachment_context(
+    file_store: &aqbot_core::file_store::FileStore,
+    content: &str,
+    attachments: &[Attachment],
+    document_attachment_reading_enabled: bool,
+    model_context_window: Option<u32>,
+) -> aqbot_core::error::Result<String> {
+    if !document_attachment_reading_enabled {
+        return Ok(content.to_string());
+    }
+
+    let document_attachments = attachments
+        .iter()
+        .filter(|attachment| is_supported_document_attachment(attachment))
+        .collect::<Vec<_>>();
+    if document_attachments.is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let mut remaining_chars = document_attachment_char_limit(model_context_window);
+    let mut blocks = Vec::new();
+    for attachment in document_attachments {
+        if remaining_chars == 0 {
+            break;
+        }
+        let Some(text) = read_document_attachment_text(file_store, attachment)? else {
+            continue;
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (excerpt, truncated) = truncate_to_char_limit(trimmed, remaining_chars);
+        remaining_chars = remaining_chars.saturating_sub(excerpt.chars().count());
+        let mut quoted = excerpt
+            .lines()
+            .map(|line| format!("> {}", line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if truncated {
+            quoted.push_str("\n> [Document text truncated for model context budget.]");
+        }
+        blocks.push(format!(
+            "Document attachment \"{}\":\n{}",
+            attachment.file_name, quoted
+        ));
+    }
+
+    if blocks.is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let mut result = content.trim_end().to_string();
+    if !result.is_empty() {
+        result.push_str("\n\n");
+    }
+    result.push_str("[Parsed document attachments]\n\n");
+    result.push_str(&blocks.join("\n\n"));
+    Ok(result)
+}
+
 fn build_message_content(
     file_store: &aqbot_core::file_store::FileStore,
     message: &Message,
+    document_attachment_reading_enabled: bool,
+    model_context_window: Option<u32>,
 ) -> aqbot_core::error::Result<ChatContent> {
     // Strip display-only tags from assistant messages
     let content = if message.role == MessageRole::Assistant {
@@ -371,6 +515,13 @@ fn build_message_content(
     } else {
         message.content.clone()
     };
+    let content = append_document_attachment_context(
+        file_store,
+        &content,
+        &message.attachments,
+        document_attachment_reading_enabled,
+        model_context_window,
+    )?;
 
     let image_attachments = message
         .attachments
@@ -428,6 +579,8 @@ fn build_message_content(
 fn chat_message_from_message(
     file_store: &aqbot_core::file_store::FileStore,
     message: &Message,
+    document_attachment_reading_enabled: bool,
+    model_context_window: Option<u32>,
 ) -> aqbot_core::error::Result<ChatMessage> {
     let tool_calls: Option<Vec<ToolCall>> = message
         .tool_calls_json
@@ -442,7 +595,12 @@ fn chat_message_from_message(
             MessageRole::Tool => "tool",
         }
         .to_string(),
-        content: build_message_content(file_store, message)?,
+        content: build_message_content(
+            file_store,
+            message,
+            document_attachment_reading_enabled,
+            model_context_window,
+        )?,
         reasoning_content: if message.role == MessageRole::Assistant {
             extract_think_blocks(&message.content)
         } else {
@@ -2031,6 +2189,11 @@ pub async fn send_message(
     let reasoning_profile = model_param_overrides
         .as_ref()
         .and_then(|p| p.reasoning_profile.clone());
+    let model_context_window = resolved_model.as_ref().and_then(|m| m.max_tokens);
+    let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
+        .await
+        .unwrap_or_default();
+    let document_attachment_reading_enabled = global_settings.document_attachment_reading_enabled;
 
     // 4. Build ChatRequest from conversation messages
     let db_messages = aqbot_core::repo::message::list_messages(&state.sea_db, &conversation_id)
@@ -2141,19 +2304,22 @@ pub async fn send_message(
         if m.status == "error" {
             continue;
         }
-        history_messages
-            .push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+        history_messages.push(
+            chat_message_from_message(
+                &file_store,
+                m,
+                document_attachment_reading_enabled,
+                model_context_window,
+            )
+            .map_err(|e| e.to_string())?,
+        );
     }
 
     // Resolve proxy config early (needed for both summary generation and main request)
-    let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
-        .await
-        .unwrap_or_default();
     let resolved_proxy = ProviderProxyConfig::resolve(&provider.proxy_config, &global_settings);
 
     // Get model info for token budget and param overrides
     // Get model context window for token budget (resolved_model fetched earlier)
-    let model_context_window = resolved_model.as_ref().and_then(|m| m.max_tokens);
 
     // Load existing summary for this conversation
     let existing_summary =
@@ -2422,6 +2588,18 @@ pub async fn regenerate_message(
             .map_err(|e| e.to_string())?;
     let decrypted_key = aqbot_core::crypto::decrypt_key(&key_row.key_encrypted, &state.master_key)
         .map_err(|e| e.to_string())?;
+    let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
+        .await
+        .unwrap_or_default();
+    let resolved_regen_model = aqbot_core::repo::provider::get_model(
+        &state.sea_db,
+        &conversation.provider_id,
+        &conversation.model_id,
+    )
+    .await
+    .ok();
+    let model_context_window = resolved_regen_model.as_ref().and_then(|m| m.max_tokens);
+    let document_attachment_reading_enabled = global_settings.document_attachment_reading_enabled;
 
     // 6. Rebuild chat messages (active messages only — old inactive versions excluded)
     let remaining_messages =
@@ -2520,16 +2698,21 @@ pub async fn regenerate_message(
             continue;
         }
         // Include messages up to and including the last user message
-        chat_messages.push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+        chat_messages.push(
+            chat_message_from_message(
+                &file_store,
+                m,
+                document_attachment_reading_enabled,
+                model_context_window,
+            )
+            .map_err(|e| e.to_string())?,
+        );
         // Stop after the user message we're regenerating from
         if m.id == last_user_msg.id {
             break;
         }
     }
 
-    let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
-        .await
-        .unwrap_or_default();
     let resolved_proxy = ProviderProxyConfig::resolve(&provider.proxy_config, &global_settings);
 
     let ctx = ProviderRequestContext {
@@ -2581,14 +2764,7 @@ pub async fn regenerate_message(
         }
     };
 
-    let regen_model_overrides = aqbot_core::repo::provider::get_model(
-        &state.sea_db,
-        &conversation.provider_id,
-        &conversation.model_id,
-    )
-    .await
-    .ok()
-    .and_then(|m| m.param_overrides);
+    let regen_model_overrides = resolved_regen_model.and_then(|m| m.param_overrides);
     let use_max_completion_tokens = regen_model_overrides
         .as_ref()
         .and_then(|p| p.use_max_completion_tokens);
@@ -2724,6 +2900,18 @@ pub async fn regenerate_with_model(
         .map_err(|e| e.to_string())?;
     let decrypted_key = aqbot_core::crypto::decrypt_key(&key_row.key_encrypted, &state.master_key)
         .map_err(|e| e.to_string())?;
+    let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
+        .await
+        .unwrap_or_default();
+    let resolved_target_model = aqbot_core::repo::provider::get_model(
+        &state.sea_db,
+        &conversation.provider_id,
+        &conversation.model_id,
+    )
+    .await
+    .ok();
+    let model_context_window = resolved_target_model.as_ref().and_then(|m| m.max_tokens);
+    let document_attachment_reading_enabled = global_settings.document_attachment_reading_enabled;
 
     // Build context messages (same logic as regenerate_message)
     let remaining_messages =
@@ -2828,15 +3016,20 @@ pub async fn regenerate_with_model(
         if m.status == "error" {
             continue;
         }
-        chat_messages.push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+        chat_messages.push(
+            chat_message_from_message(
+                &file_store,
+                m,
+                document_attachment_reading_enabled,
+                model_context_window,
+            )
+            .map_err(|e| e.to_string())?,
+        );
         if m.id == user_msg.id {
             break;
         }
     }
 
-    let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
-        .await
-        .unwrap_or_default();
     let resolved_proxy = ProviderProxyConfig::resolve(&provider.proxy_config, &global_settings);
 
     let ctx = ProviderRequestContext {
@@ -2887,14 +3080,7 @@ pub async fn regenerate_with_model(
         }
     };
 
-    let rwm_overrides = aqbot_core::repo::provider::get_model(
-        &state.sea_db,
-        &conversation.provider_id,
-        &conversation.model_id,
-    )
-    .await
-    .ok()
-    .and_then(|m| m.param_overrides);
+    let rwm_overrides = resolved_target_model.and_then(|m| m.param_overrides);
     let use_max_completion_tokens = rwm_overrides
         .as_ref()
         .and_then(|p| p.use_max_completion_tokens);
@@ -3267,7 +3453,15 @@ pub async fn compress_context(
             if m.role == MessageRole::Assistant && m.tool_calls_json.is_some() {
                 continue;
             }
-            out.push(chat_message_from_message(&file_store, m).map_err(|e| e.to_string())?);
+            out.push(
+                chat_message_from_message(
+                    &file_store,
+                    m,
+                    global_settings.document_attachment_reading_enabled,
+                    None,
+                )
+                .map_err(|e| e.to_string())?,
+            );
         }
         Ok(out)
     };
@@ -3409,6 +3603,7 @@ pub async fn send_system_message(
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::{Cursor, Write};
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -3465,6 +3660,20 @@ mod tests {
             reasoning_options: None,
             reasoning_default: None,
         }
+    }
+
+    fn test_docx_bytes(text: &str) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        archive.start_file("word/document.xml", options).unwrap();
+        write!(
+            archive,
+            r#"<w:document><w:body><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:body></w:document>"#,
+            text
+        )
+        .unwrap();
+        archive.finish().unwrap().into_inner()
     }
 
     #[tokio::test]
@@ -3530,7 +3739,7 @@ mod tests {
             status: "complete".into(),
         };
 
-        let chat_message = chat_message_from_message(&file_store, &message).unwrap();
+        let chat_message = chat_message_from_message(&file_store, &message, false, None).unwrap();
         let serialized = serde_json::to_value(chat_message).unwrap();
 
         assert_eq!(serialized["content"], "final answer");
@@ -3639,7 +3848,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message).unwrap()
+            build_message_content(&file_store, &message, false, None).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
@@ -3695,7 +3904,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message).unwrap()
+            build_message_content(&file_store, &message, false, None).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
@@ -3708,6 +3917,132 @@ mod tests {
                 );
             }
             ChatContent::Text(_) => panic!("expected multipart content"),
+        }
+    }
+
+    #[test]
+    fn build_message_content_appends_document_text_when_enabled() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "aqbot-document-attachment-test-{}",
+            aqbot_core::utils::gen_id()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let result = (|| {
+            let file_store = aqbot_core::file_store::FileStore::with_root(temp_dir.clone());
+            let docx = test_docx_bytes("Alpha project requirements");
+            let saved = file_store
+                .save_file(
+                    &docx,
+                    "requirements.docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+                .unwrap();
+            let message = Message {
+                id: "msg-1".into(),
+                conversation_id: "conv-1".into(),
+                role: MessageRole::User,
+                content: "Summarize this".into(),
+                provider_id: None,
+                model_id: None,
+                token_count: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                tokens_per_second: None,
+                first_token_latency_ms: None,
+                attachments: vec![Attachment {
+                    id: "att-1".into(),
+                    file_type:
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            .into(),
+                    file_name: "requirements.docx".into(),
+                    file_path: saved.storage_path,
+                    file_size: docx.len() as u64,
+                    data: None,
+                }],
+                thinking: None,
+                tool_calls_json: None,
+                tool_call_id: None,
+                created_at: 0,
+                parent_message_id: None,
+                version_index: 0,
+                is_active: true,
+                status: "done".into(),
+            };
+
+            build_message_content(&file_store, &message, true, Some(4096)).unwrap()
+        })();
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+
+        match result {
+            ChatContent::Text(text) => {
+                assert!(text.contains("Summarize this"));
+                assert!(text.contains("requirements.docx"));
+                assert!(text.contains("Alpha project requirements"));
+            }
+            ChatContent::Multipart(_) => panic!("expected text content"),
+        }
+    }
+
+    #[test]
+    fn build_message_content_ignores_document_text_when_disabled() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "aqbot-document-disabled-test-{}",
+            aqbot_core::utils::gen_id()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let result = (|| {
+            let file_store = aqbot_core::file_store::FileStore::with_root(temp_dir.clone());
+            let docx = test_docx_bytes("Hidden project requirements");
+            let saved = file_store
+                .save_file(
+                    &docx,
+                    "requirements.docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+                .unwrap();
+            let message = Message {
+                id: "msg-1".into(),
+                conversation_id: "conv-1".into(),
+                role: MessageRole::User,
+                content: "Summarize this".into(),
+                provider_id: None,
+                model_id: None,
+                token_count: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                tokens_per_second: None,
+                first_token_latency_ms: None,
+                attachments: vec![Attachment {
+                    id: "att-1".into(),
+                    file_type:
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            .into(),
+                    file_name: "requirements.docx".into(),
+                    file_path: saved.storage_path,
+                    file_size: docx.len() as u64,
+                    data: None,
+                }],
+                thinking: None,
+                tool_calls_json: None,
+                tool_call_id: None,
+                created_at: 0,
+                parent_message_id: None,
+                version_index: 0,
+                is_active: true,
+                status: "done".into(),
+            };
+
+            build_message_content(&file_store, &message, false, Some(4096)).unwrap()
+        })();
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+
+        match result {
+            ChatContent::Text(text) => assert_eq!(text, "Summarize this"),
+            ChatContent::Multipart(_) => panic!("expected text content"),
         }
     }
 

@@ -2,6 +2,7 @@ import { App } from 'antd';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppSettings } from '@/types';
 import { InputArea } from '../InputArea';
 
 const sendMessage = vi.fn();
@@ -74,10 +75,11 @@ const providerState = {
   ],
 };
 
-const settingsState = {
+const settingsState: { settings: Partial<AppSettings> } = {
   settings: {
     default_provider_id: null,
     default_model_id: null,
+    document_attachment_reading_enabled: false,
   },
 };
 
@@ -176,6 +178,7 @@ describe('InputArea', () => {
     conversationState.conversations[0].model_id = 'model-1';
     conversationState.thinkingBudget = null;
     conversationState.thinkingLevel = null;
+    settingsState.settings.document_attachment_reading_enabled = false;
   });
 
   it('clears the textarea immediately after sending even while search-backed send is still pending', async () => {
@@ -226,5 +229,22 @@ describe('InputArea', () => {
     expect(screen.getByText('Medium')).toBeInTheDocument();
     expect(screen.getByText('High')).toBeInTheDocument();
     expect(screen.queryByText('XHigh')).not.toBeInTheDocument();
+  });
+
+  it('shows document attachment controls for non-vision models when document reading is enabled', () => {
+    settingsState.settings.document_attachment_reading_enabled = true;
+
+    render(
+      <App>
+        <InputArea />
+      </App>,
+    );
+
+    expect(screen.getByLabelText('chat.attachFile')).toBeInTheDocument();
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input?.accept).toContain('.pdf');
+    expect(input?.accept).toContain('.doc');
+    expect(input?.accept).toContain('.docx');
   });
 });

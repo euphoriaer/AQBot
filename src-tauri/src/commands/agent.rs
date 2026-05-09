@@ -2,7 +2,10 @@ use crate::AppState;
 use aqbot_agent::permission::{classify_tool_risk, decide_permission, PermissionAction};
 use aqbot_agent::security::check_path_safety;
 use aqbot_core::repo::{agent_session, conversation, message, provider, tool_execution};
-use aqbot_core::types::{AgentSession, MessageRole, ProviderProxyConfig, ProviderType};
+use aqbot_core::types::{
+    AgentSession, AppSettings, Attachment, AttachmentInput, MessageRole, ProviderProxyConfig,
+    ProviderType,
+};
 use aqbot_providers::{resolve_base_url_for_type, ProviderAdapter, ProviderRequestContext};
 use open_agent_sdk::{
     Agent, AgentOptions, CanUseToolFn, ContentBlock, PermissionDecision, SDKMessage, Usage,
@@ -356,6 +359,21 @@ async fn resolve_agent_provider_id(
         .map_err(|e| e.to_string())
 }
 
+fn build_agent_prompt_with_attachments(
+    file_store: &aqbot_core::file_store::FileStore,
+    prompt: &str,
+    attachments: &[Attachment],
+    settings: &AppSettings,
+) -> aqbot_core::error::Result<String> {
+    super::conversations::append_document_attachment_context(
+        file_store,
+        prompt,
+        attachments,
+        settings.document_attachment_reading_enabled,
+        None,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -368,6 +386,7 @@ pub async fn agent_query(
     prompt: String,
     provider_id: String,
     model_id: String,
+    attachments: Option<Vec<AttachmentInput>>,
 ) -> Result<(), String> {
     // 1. Get agent session (must exist)
     let session =
@@ -385,6 +404,11 @@ pub async fn agent_query(
     }
 
     let real_provider_id = resolve_agent_provider_id(&state.sea_db, &provider_id).await?;
+    let attachment_inputs = attachments.unwrap_or_default();
+    let persisted_attachments =
+        super::conversations::persist_attachments(&state, &conversation_id, &attachment_inputs)
+            .await
+            .map_err(|e| e.to_string())?;
 
     // 3. Set runtime_status to 'running'
     agent_session::update_agent_session_status(&state.sea_db, &session.id, "running")
@@ -397,7 +421,7 @@ pub async fn agent_query(
         &conversation_id,
         MessageRole::User,
         &prompt,
-        &[],
+        &persisted_attachments,
         None,
         0,
     )
@@ -458,6 +482,14 @@ pub async fn agent_query(
     let global_settings = aqbot_core::repo::settings::get_settings(&state.sea_db)
         .await
         .unwrap_or_default();
+    let file_store = aqbot_core::file_store::FileStore::new();
+    let agent_prompt = build_agent_prompt_with_attachments(
+        &file_store,
+        &prompt,
+        &persisted_attachments,
+        &global_settings,
+    )
+    .map_err(|e| e.to_string())?;
     let resolved_proxy = ProviderProxyConfig::resolve(&prov.proxy_config, &global_settings);
     let ctx = ProviderRequestContext {
         api_key: decrypted_key,
@@ -784,7 +816,7 @@ pub async fn agent_query(
             "[agent] Background task started for conversation {}",
             conv_id
         );
-        let (mut rx, handle) = agent.query(&prompt).await;
+        let (mut rx, handle) = agent.query(&agent_prompt).await;
 
         let mut result_text = String::new();
         let mut final_usage: Option<Usage> = None;
@@ -1538,6 +1570,22 @@ pub async fn agent_restore_sdk_context_from_backup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::io::{Cursor, Write};
+
+    fn test_docx_bytes(text: &str) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("word/document.xml", options).unwrap();
+        write!(
+            zip,
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:body></w:document>"#,
+            text
+        )
+        .unwrap();
+        zip.finish().unwrap().into_inner()
+    }
 
     #[tokio::test]
     async fn agent_provider_resolution_materializes_builtin_provider() {
@@ -1551,5 +1599,61 @@ mod tests {
         let provider = provider::get_provider(&db, &real_id).await.unwrap();
         assert_eq!(provider.builtin_id.as_deref(), Some("deepseek"));
         assert_eq!(provider.provider_type, ProviderType::DeepSeek);
+    }
+
+    #[test]
+    fn agent_prompt_obeys_document_attachment_reading_setting() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "aqbot-agent-document-test-{}",
+            aqbot_core::utils::gen_id()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let result = (|| {
+            let file_store = aqbot_core::file_store::FileStore::with_root(temp_dir.clone());
+            let docx = test_docx_bytes("Agent document context");
+            let saved = file_store
+                .save_file(
+                    &docx,
+                    "agent-notes.docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+                .unwrap();
+            let attachments = vec![Attachment {
+                id: "att-agent".into(),
+                file_type:
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
+                file_name: "agent-notes.docx".into(),
+                file_path: saved.storage_path,
+                file_size: docx.len() as u64,
+                data: None,
+            }];
+            let mut settings = AppSettings::default();
+
+            let disabled = build_agent_prompt_with_attachments(
+                &file_store,
+                "Inspect this",
+                &attachments,
+                &settings,
+            )
+            .unwrap();
+            settings.document_attachment_reading_enabled = true;
+            let enabled = build_agent_prompt_with_attachments(
+                &file_store,
+                "Inspect this",
+                &attachments,
+                &settings,
+            )
+            .unwrap();
+
+            (disabled, enabled)
+        })();
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+
+        assert_eq!(result.0, "Inspect this");
+        assert!(result.1.contains("Inspect this"));
+        assert!(result.1.contains("agent-notes.docx"));
+        assert!(result.1.contains("Agent document context"));
     }
 }

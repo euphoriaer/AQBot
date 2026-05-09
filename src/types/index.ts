@@ -457,6 +457,8 @@ export interface AppSettings {
   /** Chat minimap / navigation overlay */
   chat_minimap_enabled?: boolean;
   chat_minimap_style?: 'faq' | 'sticky';
+  /** Parse PDF/DOC/DOCX attachments and send extracted text to the model. Default: false */
+  document_attachment_reading_enabled?: boolean;
   /** Include Image models in the conversation model selector. Default: false */
   show_image_models_in_model_selector?: boolean;
   /** Multi-model response display mode */

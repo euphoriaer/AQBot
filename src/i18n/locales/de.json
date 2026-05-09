@@ -408,6 +408,8 @@
     "chatMinimapFaq": "Fragenindex",
     "chatMinimapSticky": "Schwebender Indikator",
     "additionalFeatures": "Zusätzliche Funktionen",
+    "documentAttachmentReading": "Dokumentanhänge lesen",
+    "documentAttachmentReadingDesc": "Wenn aktiviert, werden PDF-, DOC- und DOCX-Anhänge als Text geparst und an das Modell gesendet. Sie werden nicht zur Wissensdatenbank hinzugefügt.",
     "showImageModelsInModelSelector": "Bildmodelle in der Modellauswahl anzeigen",
     "multiModelDisplayMode": "Multi-Modell-Anzeige",
     "multiModelDisplayModeDesc": "Layout für Multi-Modell-Antworten festlegen",

@@ -102,6 +102,17 @@ export function ConversationSettings() {
 
       <SettingsGroup title={t('settings.additionalFeatures')}>
         <div className="flex items-center justify-between" style={rowStyle}>
+          <div className="flex flex-col gap-1">
+            <span>{t('settings.documentAttachmentReading')}</span>
+            <span className="text-xs opacity-60">{t('settings.documentAttachmentReadingDesc')}</span>
+          </div>
+          <Switch
+            checked={settings.document_attachment_reading_enabled ?? false}
+            onChange={(checked) => saveSettings({ document_attachment_reading_enabled: checked })}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
           <span>{t('settings.showImageModelsInModelSelector')}</span>
           <Switch
             checked={settings.show_image_models_in_model_selector ?? false}
