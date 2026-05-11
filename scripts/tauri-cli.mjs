@@ -38,17 +38,23 @@ if (isBundleCommand()) {
   }
 }
 
-const tauriBin = path.join(
+const tauriCliScript = path.join(
   repoRoot,
   "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tauri.cmd" : "tauri",
+  "@tauri-apps",
+  "cli",
+  "tauri.js",
 );
 
-const child = spawn(tauriBin, args, {
+const child = spawn(process.execPath, [tauriCliScript, ...args], {
   cwd: repoRoot,
   env,
   stdio: "inherit",
+});
+
+child.on("error", (error) => {
+  console.error(error);
+  process.exit(1);
 });
 
 child.on("exit", (code, signal) => {
