@@ -70,6 +70,7 @@ UI -> App: 携带token访问
     const cleaned = stripAqbotTags(`Final answer
 <think>Hidden reasoning</think>
 <knowledge-retrieval data-aqbot="1">retrieved</knowledge-retrieval>
+<web-search data-aqbot="1">[{"title":"A"}]</web-search>
 :::mcp tool
 payload
 :::

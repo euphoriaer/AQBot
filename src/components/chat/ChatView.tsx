@@ -63,7 +63,11 @@ import {
   stripLeadingAqbotDisplayTags,
 } from './chatStreaming';
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard';
-import { buildAssistantDisplayContent, shouldHideAssistantBubble } from './toolCallDisplay';
+import {
+  buildAssistantDisplayContent,
+  shouldHideAssistantBubble,
+  splitAssistantErrorDisplayContent,
+} from './toolCallDisplay';
 import { ChatScrollIndicator } from './ChatScrollIndicator';
 import { ChatMinimap, MinimapScrollProvider } from './ChatMinimap';
 import { MultiModelDisplay, LayoutSwitcher, type MultiModelDisplayMode } from './MultiModelDisplay';
@@ -2822,17 +2826,6 @@ export function ChatView() {
           thinkingActiveMessageIds.has(msg.id) || isStreamingForRender,
         );
       }
-      if (msg.role === 'assistant' && !aiContent.includes('data-aqbot="1"')) {
-        const parentSearch = msg.parent_message_id
-          ? userSearchContentById.get(msg.parent_message_id)
-          : undefined;
-        if (parentSearch?.hasSearch && parentSearch.sources.length > 0) {
-          const { sources } = parentSearch;
-          const resultsJson = JSON.stringify(sources.map((s) => ({ title: s.title, url: s.url })));
-          aiContent = `<web-search status="done" data-aqbot="1">\n${resultsJson}\n</web-search>\n\n${aiContent}`;
-        }
-      }
-
       // Use parent_message_id as stable key for assistant bubbles to avoid
       // unmount/remount flash when switching versions. Prefix with "ai:" to
       // prevent key collision with the user message (which shares the same id).
@@ -3247,7 +3240,24 @@ export function ChatView() {
         }
 
         if (shouldRenderStandaloneAssistantError(msg?.status, isNonTabsMultiModel)) {
-          return <>{msgMarker}<Alert type="error" message={content} showIcon /></>;
+          const errorDisplay = splitAssistantErrorDisplayContent(renderContent);
+          return (
+            <>
+              {msgMarker}
+              {errorDisplay.prefix && (
+                <AssistantMarkdown
+                  content={errorDisplay.prefix}
+                  isDarkMode={isDarkMode}
+                  isStreaming={false}
+                  codeBlockDarkTheme={codeBlockDarkTheme}
+                  codeBlockLightTheme={codeBlockLightTheme}
+                  codeBlockThemes={codeBlockThemes}
+                  codeFontFamily={settings.code_font_family || undefined}
+                />
+              )}
+              <Alert type="error" message={errorDisplay.message} showIcon />
+            </>
+          );
         }
 
         if (!isAgentMsg && shouldShowInitialDots) {

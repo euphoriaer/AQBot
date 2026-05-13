@@ -339,16 +339,40 @@ fn strip_disabled_thinking_delta(delta: &str, state: &mut DisabledThinkingStripS
     }
 }
 
+const SEARCH_MARKER_START: &str = "<!-- search:";
+const SEARCH_MARKER_END: &str = " -->";
+const SEARCH_SEPARATOR: &str = "\n---\n\n";
+
+fn strip_search_enrichment(content: &str) -> String {
+    let trimmed_start = content.trim_start();
+    if !trimmed_start.starts_with(SEARCH_MARKER_START) {
+        return content.to_string();
+    }
+
+    let Some(marker_end) = trimmed_start.find(SEARCH_MARKER_END) else {
+        return content.to_string();
+    };
+    let after_marker = &trimmed_start[marker_end + SEARCH_MARKER_END.len()..];
+    let Some(separator) = after_marker.find(SEARCH_SEPARATOR) else {
+        return content.to_string();
+    };
+
+    after_marker[separator + SEARCH_SEPARATOR.len()..]
+        .trim()
+        .to_string()
+}
+
 /// Strip display-only tags from assistant message content so they aren't sent to the AI.
-/// Strips: `<knowledge-retrieval data-aqbot="1">` and `<memory-retrieval data-aqbot="1">` tags,
+/// Strips: `<web-search data-aqbot="1">`, `<knowledge-retrieval data-aqbot="1">`,
+/// and `<memory-retrieval data-aqbot="1">` tags,
 /// `:::mcp ... :::` fenced blocks, and `<think>...</think>` blocks.
 fn strip_display_tags(content: &str) -> String {
     // Strip <think> blocks first
     let content = strip_think_tags(content);
-    // Strip knowledge-retrieval and memory-retrieval tags with data-aqbot attribute
+    // Strip AQBot display tags with data-aqbot attribute
     let content = {
         let mut s = content.to_string();
-        for tag_name in &["knowledge-retrieval", "memory-retrieval"] {
+        for tag_name in &["web-search", "knowledge-retrieval", "memory-retrieval"] {
             let tag_start = format!("<{} ", tag_name);
             let tag_end = format!("</{}>", tag_name);
             while let Some(start_pos) = s.find(&tag_start) {
@@ -551,12 +575,14 @@ fn build_message_content(
     message: &Message,
     document_attachment_reading_enabled: bool,
     model_context_window: Option<u32>,
+    preserve_user_search_context: bool,
 ) -> aqbot_core::error::Result<ChatContent> {
-    // Strip display-only tags from assistant messages
-    let content = if message.role == MessageRole::Assistant {
-        strip_display_tags(&message.content)
-    } else {
-        message.content.clone()
+    let content = match message.role {
+        MessageRole::Assistant => strip_display_tags(&message.content),
+        MessageRole::User if !preserve_user_search_context => {
+            strip_search_enrichment(&message.content)
+        }
+        _ => message.content.clone(),
     };
     let content = append_document_attachment_context(
         file_store,
@@ -624,6 +650,7 @@ fn chat_message_from_message(
     message: &Message,
     document_attachment_reading_enabled: bool,
     model_context_window: Option<u32>,
+    preserve_user_search_context: bool,
 ) -> aqbot_core::error::Result<ChatMessage> {
     let tool_calls: Option<Vec<ToolCall>> = message
         .tool_calls_json
@@ -643,6 +670,7 @@ fn chat_message_from_message(
             message,
             document_attachment_reading_enabled,
             model_context_window,
+            preserve_user_search_context,
         )?,
         reasoning_content: if message.role == MessageRole::Assistant {
             extract_think_blocks(&message.content)
@@ -2442,6 +2470,8 @@ pub async fn send_message(
         .await
         .insert(conversation_id.clone(), cancel_flag.clone());
 
+    let user_query_content = strip_search_enrichment(&content);
+
     // RAG retrieval: search enabled knowledge bases and memory namespaces
     let kb_ids = enabled_knowledge_base_ids.unwrap_or_default();
     let mem_ids = enabled_memory_namespace_ids.unwrap_or_default();
@@ -2452,7 +2482,7 @@ pub async fn send_message(
         state.vector_store.as_ref(),
         &conversation_id,
         &assistant_message_id,
-        &content,
+        &user_query_content,
         kb_ids,
         mem_ids,
         &cancel_flag,
@@ -2519,6 +2549,7 @@ pub async fn send_message(
                 m,
                 document_attachment_reading_enabled,
                 model_context_window,
+                m.id == user_message.id,
             )
             .map_err(|e| e.to_string())?,
         );
@@ -2678,7 +2709,7 @@ pub async fn send_message(
         ctx,
         chat_messages,
         is_first_message,
-        content,
+        user_query_content,
         user_msg_id,
         0,
         tools,
@@ -2835,6 +2866,8 @@ pub async fn regenerate_message(
         .await
         .insert(conversation_id.clone(), cancel_flag.clone());
 
+    let target_user_content = strip_search_enrichment(&last_user_msg.content);
+
     // RAG retrieval for regeneration
     let memory_tag = {
         let kb_ids = enabled_knowledge_base_ids.unwrap_or_default();
@@ -2846,7 +2879,7 @@ pub async fn regenerate_message(
             state.vector_store.as_ref(),
             &conversation_id,
             &assistant_message_id,
-            &last_user_msg.content,
+            &target_user_content,
             kb_ids,
             mem_ids,
             &cancel_flag,
@@ -2914,6 +2947,7 @@ pub async fn regenerate_message(
                 m,
                 document_attachment_reading_enabled,
                 model_context_window,
+                m.id == last_user_msg.id,
             )
             .map_err(|e| e.to_string())?,
         );
@@ -3011,7 +3045,7 @@ pub async fn regenerate_message(
         ctx,
         chat_messages,
         false,
-        last_user_msg.content,
+        target_user_content,
         last_user_msg.id,
         new_version_index,
         tools,
@@ -3158,6 +3192,8 @@ pub async fn regenerate_with_model(
         .await
         .insert(conversation_id.clone(), cancel_flag.clone());
 
+    let target_user_content = strip_search_enrichment(&user_msg.content);
+
     // RAG retrieval
     let memory_tag = {
         let kb_ids = enabled_knowledge_base_ids.unwrap_or_default();
@@ -3169,7 +3205,7 @@ pub async fn regenerate_with_model(
             state.vector_store.as_ref(),
             &conversation_id,
             &assistant_message_id,
-            &user_msg.content,
+            &target_user_content,
             kb_ids,
             mem_ids,
             &cancel_flag,
@@ -3233,6 +3269,7 @@ pub async fn regenerate_with_model(
                 m,
                 document_attachment_reading_enabled,
                 model_context_window,
+                m.id == user_msg.id,
             )
             .map_err(|e| e.to_string())?,
         );
@@ -3369,7 +3406,7 @@ pub async fn regenerate_with_model(
         ctx,
         chat_messages,
         false,
-        user_msg.content,
+        target_user_content,
         user_msg.id,
         new_version_index,
         tools,
@@ -3663,6 +3700,7 @@ pub async fn compress_context(
                     m,
                     global_settings.document_attachment_reading_enabled,
                     None,
+                    false,
                 )
                 .map_err(|e| e.to_string())?,
             );
@@ -3993,11 +4031,138 @@ mod tests {
             status: "complete".into(),
         };
 
-        let chat_message = chat_message_from_message(&file_store, &message, false, None).unwrap();
+        let chat_message =
+            chat_message_from_message(&file_store, &message, false, None, false).unwrap();
         let serialized = serde_json::to_value(chat_message).unwrap();
 
         assert_eq!(serialized["content"], "final answer");
         assert_eq!(serialized["reasoning_content"], "hidden thinking");
+    }
+
+    #[test]
+    fn historical_user_search_context_is_stripped_from_model_history() {
+        let file_store = aqbot_core::file_store::FileStore::new();
+        let message = Message {
+            id: "msg-1".into(),
+            conversation_id: "conv-1".into(),
+            role: MessageRole::User,
+            content: concat!(
+                "<!-- search:{\"sources\":[{\"title\":\"A\",\"url\":\"https://example.com\"}]} -->\n",
+                "以下是与问题相关的网络搜索结果，请参考回答：\n\n",
+                "1. **A** - https://example.com\n   search body\n\n",
+                "---\n\n",
+                "用户原始问题"
+            )
+            .into(),
+            provider_id: None,
+            model_id: None,
+            token_count: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            tokens_per_second: None,
+            first_token_latency_ms: None,
+            attachments: Vec::new(),
+            thinking: None,
+            tool_calls_json: None,
+            tool_call_id: None,
+            created_at: 0,
+            parent_message_id: None,
+            version_index: 0,
+            is_active: true,
+            status: "complete".into(),
+        };
+
+        let chat_message =
+            chat_message_from_message(&file_store, &message, false, None, false).unwrap();
+        let serialized = serde_json::to_value(chat_message).unwrap();
+
+        assert_eq!(serialized["content"], "用户原始问题");
+    }
+
+    #[test]
+    fn current_user_search_context_is_preserved_for_model_request() {
+        let file_store = aqbot_core::file_store::FileStore::new();
+        let content = concat!(
+            "<!-- search:{\"sources\":[{\"title\":\"A\",\"url\":\"https://example.com\"}]} -->\n",
+            "以下是与问题相关的网络搜索结果，请参考回答：\n\n",
+            "1. **A** - https://example.com\n   search body\n\n",
+            "---\n\n",
+            "用户原始问题"
+        );
+        let message = Message {
+            id: "msg-1".into(),
+            conversation_id: "conv-1".into(),
+            role: MessageRole::User,
+            content: content.into(),
+            provider_id: None,
+            model_id: None,
+            token_count: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            tokens_per_second: None,
+            first_token_latency_ms: None,
+            attachments: Vec::new(),
+            thinking: None,
+            tool_calls_json: None,
+            tool_call_id: None,
+            created_at: 0,
+            parent_message_id: None,
+            version_index: 0,
+            is_active: true,
+            status: "complete".into(),
+        };
+
+        let chat_message =
+            chat_message_from_message(&file_store, &message, false, None, true).unwrap();
+        let serialized = serde_json::to_value(chat_message).unwrap();
+
+        assert!(serialized["content"]
+            .as_str()
+            .unwrap()
+            .contains("search body"));
+        assert!(serialized["content"]
+            .as_str()
+            .unwrap()
+            .contains("用户原始问题"));
+    }
+
+    #[test]
+    fn assistant_history_strips_web_search_display_tags() {
+        let file_store = aqbot_core::file_store::FileStore::new();
+        let message = Message {
+            id: "msg-1".into(),
+            conversation_id: "conv-1".into(),
+            role: MessageRole::Assistant,
+            content: concat!(
+                "<web-search status=\"done\" data-aqbot=\"1\">\n",
+                "[{\"title\":\"A\",\"url\":\"https://example.com\",\"content\":\"search body\"}]\n",
+                "</web-search>\n\n",
+                "final answer"
+            )
+            .into(),
+            provider_id: None,
+            model_id: None,
+            token_count: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            tokens_per_second: None,
+            first_token_latency_ms: None,
+            attachments: Vec::new(),
+            thinking: None,
+            tool_calls_json: None,
+            tool_call_id: None,
+            created_at: 0,
+            parent_message_id: None,
+            version_index: 0,
+            is_active: true,
+            status: "complete".into(),
+        };
+
+        let chat_message =
+            chat_message_from_message(&file_store, &message, false, None, false).unwrap();
+        let serialized = serde_json::to_value(chat_message).unwrap();
+
+        assert_eq!(serialized["content"], "final answer");
     }
 
     #[test]
@@ -4102,7 +4267,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message, false, None).unwrap()
+            build_message_content(&file_store, &message, false, None, false).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
@@ -4158,7 +4323,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message, false, None).unwrap()
+            build_message_content(&file_store, &message, false, None, false).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
@@ -4224,7 +4389,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message, true, Some(4096)).unwrap()
+            build_message_content(&file_store, &message, true, Some(4096), false).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
@@ -4289,7 +4454,7 @@ mod tests {
                 status: "done".into(),
             };
 
-            build_message_content(&file_store, &message, false, Some(4096)).unwrap()
+            build_message_content(&file_store, &message, false, Some(4096), false).unwrap()
         })();
 
         fs::remove_dir_all(&temp_dir).unwrap();
