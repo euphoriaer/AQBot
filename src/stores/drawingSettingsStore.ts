@@ -4,8 +4,7 @@ import {
   DRAWING_MODELS,
   DRAWING_REFERENCE_IMAGE_MODES,
   DRAWING_SIZE_OPTIONS,
-  isDrawingOutputCompressionSupported,
-  isDrawingTransparentBackgroundSupported,
+  normalizeDrawingSettingsByConfig,
 } from '@/lib/drawingModels';
 import type {
   DrawingBackground,
@@ -88,17 +87,11 @@ export function normalizeDrawingSettings(settings: Partial<DrawingSettings> = {}
   const outputFormat = isDrawingOutputFormat(settings.outputFormat)
     ? settings.outputFormat
     : DEFAULT_DRAWING_SETTINGS.outputFormat;
-  const rawBackground = isDrawingBackground(settings.background)
-    ? settings.background
-    : DEFAULT_DRAWING_SETTINGS.background;
-  const background = isDrawingTransparentBackgroundSupported(modelId) || rawBackground !== 'transparent'
-    ? rawBackground
-    : 'auto';
   const outputCompression = typeof settings.outputCompression === 'number'
     ? clampNumber(Math.round(settings.outputCompression), MIN_OUTPUT_COMPRESSION, MAX_OUTPUT_COMPRESSION)
     : undefined;
 
-  return {
+  return normalizeDrawingSettingsByConfig({
     providerId: typeof settings.providerId === 'string'
       ? settings.providerId
       : DEFAULT_DRAWING_SETTINGS.providerId,
@@ -110,10 +103,10 @@ export function normalizeDrawingSettings(settings: Partial<DrawingSettings> = {}
       ? settings.quality
       : DEFAULT_DRAWING_SETTINGS.quality,
     outputFormat,
-    background,
-    outputCompression: isDrawingOutputCompressionSupported(modelId, outputFormat)
-      ? outputCompression
-      : undefined,
+    background: isDrawingBackground(settings.background)
+      ? settings.background
+      : DEFAULT_DRAWING_SETTINGS.background,
+    outputCompression,
     referenceImageMode: isDrawingReferenceImageMode(settings.referenceImageMode)
       ? settings.referenceImageMode
       : DEFAULT_DRAWING_SETTINGS.referenceImageMode,
@@ -132,7 +125,7 @@ export function normalizeDrawingSettings(settings: Partial<DrawingSettings> = {}
     editApiPath: typeof settings.editApiPath === 'string'
       ? settings.editApiPath
       : DEFAULT_DRAWING_SETTINGS.editApiPath,
-  };
+  });
 }
 
 function readPersistedSettings(persistedState: unknown): Partial<DrawingSettings> {

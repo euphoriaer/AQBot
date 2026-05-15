@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { ProviderConfig } from '@/types';
+import type { DrawingSettings, ProviderConfig } from '@/types';
+import type { DrawingParamRenderContext } from '@/components/drawing/params/types';
 import {
   getDrawingBackgroundOptions,
   getDrawingModelOptions,
+  getDrawingParamConfig,
   getDrawingOutputFormatOptions,
   getDrawingProvidersForModel,
   getDrawingQualityOptions,
+  getDrawingReferenceImageFormatOptions,
   getDrawingReferenceImageModeOptions,
   getDrawingSizeOptions,
   isDrawingOutputCompressionSupported,
+  normalizeDrawingSettingsByConfig,
 } from '../drawingModels';
 
 function providerFixture(overrides: Partial<ProviderConfig>): ProviderConfig {
@@ -29,6 +33,36 @@ function providerFixture(overrides: Partial<ProviderConfig>): ProviderConfig {
     created_at: 0,
     updated_at: 0,
     ...overrides,
+  };
+}
+
+function settingsFixture(overrides: Partial<DrawingSettings> = {}): DrawingSettings {
+  return {
+    providerId: 'provider',
+    modelId: 'gpt-image-2',
+    size: 'auto',
+    quality: 'auto',
+    outputFormat: 'png',
+    background: 'auto',
+    outputCompression: undefined,
+    referenceImageMode: 'multipart',
+    referenceImageFormat: 'object',
+    referenceImageParamName: 'image',
+    n: 1,
+    generationApiPath: '/images/generations',
+    editApiPath: '/images/edits',
+    ...overrides,
+  };
+}
+
+function renderContext(settings: DrawingSettings): DrawingParamRenderContext {
+  return {
+    settings,
+    providers: [],
+    modelOptions: [],
+    providerOptions: [],
+    t: (_key, fallback) => fallback,
+    getProvidersForModel: () => [],
   };
 }
 
@@ -126,6 +160,10 @@ describe('drawing model/provider filtering', () => {
       { label: 'Multipart', value: 'multipart' },
       { label: 'Base64', value: 'base64' },
     ]);
+    expect(getDrawingReferenceImageFormatOptions(t)).toEqual([
+      { label: '对象数组', value: 'object' },
+      { label: '字符串数组', value: 'string' },
+    ]);
   });
 
   it('hides unsupported gpt-image-2 parameters instead of disabling them', () => {
@@ -144,5 +182,71 @@ describe('drawing model/provider filtering', () => {
     expect(isDrawingOutputCompressionSupported('gpt-image-2', 'jpeg')).toBe(false);
     expect(isDrawingOutputCompressionSupported('gpt-image-1', 'jpeg')).toBe(true);
     expect(isDrawingOutputCompressionSupported('gpt-image-1', 'png')).toBe(false);
+  });
+
+  it('returns the GPT-Image parameter schema for GPT-Image models', () => {
+    const config = getDrawingParamConfig('gpt-image-2');
+    const basic = config.groups.find((group) => group.id === 'basic');
+    const advanced = config.groups.find((group) => group.id === 'advanced');
+
+    expect(config.id).toBe('gpt-image');
+    expect(basic?.fields.map((field) => field.id)).toEqual([
+      'model',
+      'provider',
+      'size',
+      'quality',
+      'outputFormat',
+      'background',
+      'batchCount',
+      'references',
+    ]);
+    expect(advanced?.fields.map((field) => field.id)).toEqual([
+      'generationApiPath',
+      'editApiPath',
+      'referenceImageMode',
+      'referenceImageFormat',
+      'referenceImageParamName',
+      'compression',
+    ]);
+  });
+
+  it('uses schema visibility for model-specific GPT-Image fields', () => {
+    const config = getDrawingParamConfig('gpt-image-2');
+    const advanced = config.groups.find((group) => group.id === 'advanced');
+    const compression = advanced?.fields.find((field) => field.id === 'compression');
+
+    expect(compression?.visibleWhen?.(renderContext(settingsFixture({
+      modelId: 'gpt-image-2',
+      outputFormat: 'jpeg',
+    })))).toBe(false);
+    expect(compression?.visibleWhen?.(renderContext(settingsFixture({
+      modelId: 'gpt-image-1',
+      outputFormat: 'jpeg',
+    })))).toBe(true);
+    expect(compression?.visibleWhen?.(renderContext(settingsFixture({
+      modelId: 'gpt-image-1',
+      outputFormat: 'png',
+    })))).toBe(false);
+  });
+
+  it('normalizes settings through the selected schema rules', () => {
+    expect(normalizeDrawingSettingsByConfig(settingsFixture({
+      modelId: 'gpt-image-2',
+      outputFormat: 'jpeg',
+      background: 'transparent',
+      outputCompression: 80,
+    }))).toMatchObject({
+      background: 'auto',
+      outputCompression: undefined,
+    });
+    expect(normalizeDrawingSettingsByConfig(settingsFixture({
+      modelId: 'gpt-image-1',
+      outputFormat: 'jpeg',
+      background: 'transparent',
+      outputCompression: 80,
+    }))).toMatchObject({
+      background: 'transparent',
+      outputCompression: 80,
+    });
   });
 });

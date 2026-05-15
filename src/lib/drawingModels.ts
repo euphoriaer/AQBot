@@ -3,16 +3,28 @@ import type {
   DrawingModelId,
   DrawingOutputFormat,
   DrawingQuality,
+  DrawingSettings,
+  DrawingReferenceImageFormat,
   DrawingReferenceImageMode,
   ProviderConfig,
 } from '@/types';
+import {
+  GPT_IMAGE_MODELS,
+  GPT_IMAGE_PARAM_CONFIG,
+  GPT_IMAGE_REFERENCE_IMAGE_MODES,
+  GPT_IMAGE_SIZE_OPTIONS,
+  getGptImageBackgroundOptions,
+  getGptImageOutputFormatOptions,
+  getGptImageQualityOptions,
+  getGptImageReferenceImageFormatOptions,
+  getGptImageReferenceImageModeOptions,
+  getGptImageSizeOptions,
+  isGptImageOutputCompressionSupported,
+  isGptImageTransparentBackgroundSupported,
+} from '@/components/drawing/params/gpt-image';
+import type { DrawingParamConfig } from '@/components/drawing/params/types';
 
-export const DRAWING_MODELS: Array<{ id: DrawingModelId; name: string }> = [
-  { id: 'gpt-image-2', name: 'gpt-image-2' },
-  { id: 'gpt-image-1.5', name: 'gpt-image-1.5' },
-  { id: 'gpt-image-1', name: 'gpt-image-1' },
-  { id: 'gpt-image-1-mini', name: 'gpt-image-1-mini' },
-];
+export const DRAWING_MODELS: Array<{ id: DrawingModelId; name: string }> = [...GPT_IMAGE_MODELS];
 
 export interface DrawingModelOption {
   label: string;
@@ -20,6 +32,7 @@ export interface DrawingModelOption {
 }
 
 type DrawingTranslate = (key: string, fallback: string) => string;
+const DRAWING_PARAM_CONFIGS: DrawingParamConfig[] = [GPT_IMAGE_PARAM_CONFIG];
 
 function isOpenAIImagesCompatible(provider: ProviderConfig): boolean {
   return provider.provider_type === 'openai' || provider.provider_type === 'custom';
@@ -37,6 +50,11 @@ export function getDrawingModelOptions(_providers?: ProviderConfig[]): DrawingMo
   return DRAWING_MODELS.map((model) => ({ label: model.name, value: model.id }));
 }
 
+export function getDrawingParamConfig(modelId: DrawingModelId): DrawingParamConfig {
+  return DRAWING_PARAM_CONFIGS.find((config) => config.modelIds.includes(modelId))
+    ?? GPT_IMAGE_PARAM_CONFIG;
+}
+
 export function getDrawingProvidersForModel(
   providers: ProviderConfig[],
   modelId: DrawingModelId,
@@ -48,79 +66,77 @@ export function getDrawingProvidersForModel(
   );
 }
 
-export const DRAWING_SIZE_OPTIONS = [
-  'auto',
-  '1024x1024',
-  '1536x1024',
-  '1024x1536',
-  '2048x2048',
-  '2048x1152',
-  '3840x2160',
-];
+export const DRAWING_SIZE_OPTIONS = [...GPT_IMAGE_SIZE_OPTIONS];
 
-export const DRAWING_REFERENCE_IMAGE_MODES: DrawingReferenceImageMode[] = ['multipart', 'base64'];
+export const DRAWING_REFERENCE_IMAGE_MODES: DrawingReferenceImageMode[] = [...GPT_IMAGE_REFERENCE_IMAGE_MODES];
 
 export function getDrawingSizeOptions(t: DrawingTranslate): Array<{ label: string; value: string }> {
-  return DRAWING_SIZE_OPTIONS.map((size) => ({
-    label: size === 'auto' ? t('drawing.option.auto', 'Auto') : size,
-    value: size,
+  return getGptImageSizeOptions(t).map(({ fallbackLabel, value }) => ({
+    label: fallbackLabel,
+    value: String(value),
   }));
 }
 
 export function getDrawingQualityOptions(
   t: DrawingTranslate,
 ): Array<{ label: string; value: DrawingQuality }> {
-  return [
-    { label: t('drawing.option.auto', 'Auto'), value: 'auto' },
-    { label: t('drawing.option.quality.low', 'Low'), value: 'low' },
-    { label: t('drawing.option.quality.medium', 'Medium'), value: 'medium' },
-    { label: t('drawing.option.quality.high', 'High'), value: 'high' },
-  ];
+  return getGptImageQualityOptions(t).map(({ fallbackLabel, value }) => ({
+    label: fallbackLabel,
+    value: value as DrawingQuality,
+  }));
 }
 
 export function getDrawingOutputFormatOptions(
   t: DrawingTranslate,
 ): Array<{ label: string; value: DrawingOutputFormat }> {
-  return [
-    { label: t('drawing.option.outputFormat.png', 'PNG'), value: 'png' },
-    { label: t('drawing.option.outputFormat.jpeg', 'JPEG'), value: 'jpeg' },
-    { label: t('drawing.option.outputFormat.webp', 'WEBP'), value: 'webp' },
-  ];
+  return getGptImageOutputFormatOptions(t).map(({ fallbackLabel, value }) => ({
+    label: fallbackLabel,
+    value: value as DrawingOutputFormat,
+  }));
 }
 
 export function isDrawingTransparentBackgroundSupported(modelId?: DrawingModelId): boolean {
-  return modelId !== 'gpt-image-2';
+  return isGptImageTransparentBackgroundSupported(modelId);
 }
 
 export function isDrawingOutputCompressionSupported(
   modelId: DrawingModelId,
   outputFormat: DrawingOutputFormat,
 ): boolean {
-  return modelId !== 'gpt-image-2' && (outputFormat === 'jpeg' || outputFormat === 'webp');
+  return isGptImageOutputCompressionSupported(modelId, outputFormat);
 }
 
 export function getDrawingBackgroundOptions(
   t: DrawingTranslate,
   modelId?: DrawingModelId,
 ): Array<{ label: string; value: DrawingBackground }> {
-  const options: Array<{ label: string; value: DrawingBackground }> = [
-    { label: t('drawing.option.auto', 'Auto'), value: 'auto' },
-    { label: t('drawing.option.background.opaque', 'Opaque'), value: 'opaque' },
-    { label: t('drawing.option.background.transparent', 'Transparent'), value: 'transparent' },
-  ];
-  if (!isDrawingTransparentBackgroundSupported(modelId)) {
-    return options.filter((option) => option.value !== 'transparent');
-  }
-  return options;
+  return getGptImageBackgroundOptions(t, modelId).map(({ fallbackLabel, value }) => ({
+    label: fallbackLabel,
+    value: value as DrawingBackground,
+  }));
 }
 
 export function getDrawingReferenceImageModeOptions(
   t: DrawingTranslate,
 ): Array<{ label: string; value: DrawingReferenceImageMode }> {
-  return [
-    { label: t('drawing.option.referenceImageMode.multipart', 'Multipart'), value: 'multipart' },
-    { label: t('drawing.option.referenceImageMode.base64', 'Base64'), value: 'base64' },
-  ];
+  return getGptImageReferenceImageModeOptions(t).map(({ fallbackLabel, value }) => ({
+    label: fallbackLabel,
+    value: value as DrawingReferenceImageMode,
+  }));
+}
+
+export function getDrawingReferenceImageFormatOptions(
+  t: DrawingTranslate,
+): Array<{ label: string; value: DrawingReferenceImageFormat }> {
+  return getGptImageReferenceImageFormatOptions(t).map(({ fallbackLabel, value }) => ({
+    label: fallbackLabel,
+    value: value as DrawingReferenceImageFormat,
+  }));
+}
+
+export function normalizeDrawingSettingsByConfig(settings: DrawingSettings): DrawingSettings {
+  const config = getDrawingParamConfig(settings.modelId);
+  return config.normalizeSettings ? config.normalizeSettings(settings) : settings;
 }
 
 export function describeDrawingSize(size: string) {

@@ -91,5 +91,6 @@ describe('DrawingSettingsPanel', () => {
 
     expect(advancedButton).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('生图接口')).toBeDefined();
+    expect(screen.queryByText('压缩')).toBeNull();
   });
 });
