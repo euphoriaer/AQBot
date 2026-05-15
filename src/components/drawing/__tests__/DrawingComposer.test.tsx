@@ -109,6 +109,7 @@ describe('DrawingComposer', () => {
         prompt: '替换涂抹区域',
         reference_image_mode: 'base64',
         reference_image_format: 'object',
+        reference_image_param_name: 'image',
       }));
     });
     expect(editImage).not.toHaveBeenCalled();

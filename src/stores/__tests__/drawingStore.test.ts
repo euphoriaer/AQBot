@@ -63,6 +63,7 @@ describe('drawingStore', () => {
       n: 10,
       reference_image_mode: 'multipart',
       reference_image_format: 'object',
+      reference_image_param_name: 'image',
       reference_file_ids: [],
     });
 
@@ -141,6 +142,7 @@ describe('drawingStore', () => {
       n: 4,
       reference_image_mode: 'multipart',
       reference_image_format: 'object',
+      reference_image_param_name: 'image',
       reference_file_ids: [],
     });
 
@@ -184,6 +186,7 @@ describe('drawingStore', () => {
       n: 1,
       reference_image_mode: 'multipart',
       reference_image_format: 'object',
+      reference_image_param_name: 'image',
       reference_file_ids: [],
     });
 
@@ -263,6 +266,7 @@ describe('drawingStore', () => {
       mask_file_id: 'mask-1',
       reference_image_mode: 'multipart',
       reference_image_format: 'object',
+      reference_image_param_name: 'image',
       reference_file_ids: ['ref-1'],
     });
 
@@ -306,6 +310,7 @@ describe('drawingStore', () => {
       n: 1,
       reference_image_mode: 'multipart',
       reference_image_format: 'object',
+      reference_image_param_name: 'image',
       reference_file_ids: [],
     });
 
@@ -342,6 +347,7 @@ describe('drawingStore', () => {
       mask_file_id: 'mask-1',
       reference_image_mode: 'multipart',
       reference_image_format: 'object',
+      reference_image_param_name: 'image',
       reference_file_ids: [],
     });
 
@@ -376,7 +382,8 @@ describe('drawingStore', () => {
         background: 'auto',
         n: 1,
         reference_image_mode: 'multipart',
-      reference_image_format: 'object',
+        reference_image_format: 'object',
+        reference_image_param_name: 'image',
         reference_file_ids: ['ref-1'],
       }),
       reference_file_ids_json: '["ref-1"]',

@@ -609,6 +609,7 @@ export interface DrawingGenerateInput {
   n: number;
   reference_image_mode: DrawingReferenceImageMode;
   reference_image_format: DrawingReferenceImageFormat;
+  reference_image_param_name: string;
   generation_api_path?: string;
   edit_api_path?: string;
   reference_file_ids: string[];
