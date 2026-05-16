@@ -50,6 +50,28 @@ pub fn configure_main_window(app: &tauri::AppHandle, main_window: &WebviewWindow
     }
 }
 
+pub fn ensure_main_window_for_setup(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        tracing::info!("AQBot main window found during setup");
+        configure_main_window(app, &main_window);
+        tracing::info!("AQBot main window configured");
+        return Ok(());
+    }
+
+    tracing::warn!("AQBot main window was not found during setup");
+
+    #[cfg(target_os = "linux")]
+    if crate::linux_webkit::should_create_main_window_in_setup() {
+        tracing::info!("Creating AQBot main window manually during Linux setup");
+        let main_window = create_main_window_from_config(app)?;
+        tracing::info!("AQBot main window manually created during Linux setup");
+        configure_main_window(app, &main_window);
+        tracing::info!("AQBot main window configured");
+    }
+
+    Ok(())
+}
+
 pub fn release_main_window_to_tray(window: &tauri::Window) -> Result<(), String> {
     let app = window.app_handle();
     if should_release_webview(&app) {
@@ -119,6 +141,12 @@ pub fn restore_main_window(app: &tauri::AppHandle) {
 }
 
 fn restore_main_window_inner(app: &tauri::AppHandle) -> Result<(), String> {
+    let window = create_main_window_from_config(app)?;
+    configure_main_window(app, &window);
+    Ok(())
+}
+
+fn create_main_window_from_config(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
     let config = app
         .config()
         .app
@@ -127,12 +155,18 @@ fn restore_main_window_inner(app: &tauri::AppHandle) -> Result<(), String> {
         .find(|config| config.label == MAIN_WINDOW_LABEL)
         .ok_or_else(|| "main window config not found".to_string())?;
 
-    let window = tauri::WebviewWindowBuilder::from_config(app, config)
-        .map_err(|err| err.to_string())?
-        .build()
-        .map_err(|err| err.to_string())?;
-    configure_main_window(app, &window);
-    Ok(())
+    tracing::info!(
+        label = %config.label,
+        create = config.create,
+        visible = config.visible,
+        "Preparing AQBot main window builder from config"
+    );
+    let builder =
+        tauri::WebviewWindowBuilder::from_config(app, config).map_err(|err| err.to_string())?;
+    tracing::info!("AQBot main window builder created from config");
+    let window = builder.build().map_err(|err| err.to_string())?;
+    tracing::info!("AQBot main window WebView build completed");
+    Ok(window)
 }
 
 fn should_release_webview(app: &tauri::AppHandle) -> bool {

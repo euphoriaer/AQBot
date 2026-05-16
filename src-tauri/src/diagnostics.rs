@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use tracing_subscriber::fmt::MakeWriter;
 
 pub const LOG_FILE_ENV: &str = "AQBOT_LOG_FILE";
+const LINUX_AUTO_WINDOW_ENV: &str = "AQBOT_LINUX_AUTO_WINDOW";
 
 #[derive(Clone)]
 struct SharedLogFile {
@@ -104,8 +105,48 @@ pub fn log_process_startup() {
         wayland_display = %env_value("WAYLAND_DISPLAY"),
         display = %env_value("DISPLAY"),
         gdk_backend = %env_value("GDK_BACKEND"),
+        aqbot_linux_auto_window = %env_value(LINUX_AUTO_WINDOW_ENV),
         "AQBot process startup diagnostics"
     );
+}
+
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        let location = panic_info
+            .location()
+            .map(|location| {
+                format!(
+                    "{}:{}:{}",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                )
+            })
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let payload = panic_payload(panic_info.payload());
+
+        tracing::error!(
+            location = %location,
+            payload = %payload,
+            "AQBot process panicked"
+        );
+        eprintln!("AQBot process panicked at {location}: {payload}");
+    }));
+}
+
+#[cfg(target_os = "linux")]
+pub fn show_linux_startup_error_dialog(message: &str) {
+    if spawn_linux_dialog(
+        "zenity",
+        &["--error", "--title", "AQBot", "--text", message],
+    ) {
+        return;
+    }
+    if spawn_linux_dialog("kdialog", &["--title", "AQBot", "--error", message]) {
+        return;
+    }
+
+    tracing::warn!("No Linux native dialog command available for startup error");
 }
 
 fn init_stderr_tracing() {
@@ -124,6 +165,24 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
 
 fn env_value(key: &str) -> String {
     env::var(key).unwrap_or_else(|_| "<unset>".to_string())
+}
+
+fn panic_payload(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_linux_dialog(command: &str, args: &[&str]) -> bool {
+    std::process::Command::new(command)
+        .args(args)
+        .spawn()
+        .is_ok()
 }
 
 fn log_file_path_from_value(value: Option<OsString>) -> Option<PathBuf> {

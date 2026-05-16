@@ -9,6 +9,10 @@ const DMABUF_ENV: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
 const COMPOSITING_ENV: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
 #[cfg(target_os = "linux")]
 const XDG_SESSION_TYPE_ENV: &str = "XDG_SESSION_TYPE";
+#[cfg(target_os = "linux")]
+const AUTO_WINDOW_ENV: &str = "AQBOT_LINUX_AUTO_WINDOW";
+#[cfg(target_os = "linux")]
+const MAIN_WINDOW_LABEL: &str = "main";
 
 #[derive(Debug, PartialEq, Eq)]
 enum WorkaroundDecision {
@@ -60,6 +64,41 @@ pub fn apply_startup_workarounds() {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn configure_startup_window_creation<R: tauri::Runtime>(context: &mut tauri::Context<R>) {
+    let auto_window = should_use_tauri_auto_window_from_env();
+    let window_count = context.config().app.windows.len();
+
+    if auto_window {
+        tracing::info!(
+            auto_window_env = %env_value(AUTO_WINDOW_ENV),
+            window_count,
+            "Using Tauri automatic window creation for Linux diagnostics"
+        );
+        return;
+    }
+
+    let mut disabled_labels = Vec::new();
+    for window in &mut context.config_mut().app.windows {
+        if window.label == MAIN_WINDOW_LABEL {
+            window.create = false;
+            disabled_labels.push(window.label.clone());
+        }
+    }
+
+    tracing::info!(
+        auto_window_env = %env_value(AUTO_WINDOW_ENV),
+        window_count,
+        disabled_labels = ?disabled_labels,
+        "Disabled Tauri automatic main window creation for Linux diagnostics"
+    );
+}
+
+#[cfg(target_os = "linux")]
+pub fn should_create_main_window_in_setup() -> bool {
+    !should_use_tauri_auto_window_from_env()
+}
+
 fn decide_workaround(
     opt_out: Option<&str>,
     user_configured_dmabuf: bool,
@@ -95,9 +134,23 @@ fn is_truthy(value: &str) -> bool {
     )
 }
 
+fn should_use_tauri_auto_window(value: Option<&str>) -> bool {
+    value.map(is_truthy).unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn should_use_tauri_auto_window_from_env() -> bool {
+    should_use_tauri_auto_window(env::var(AUTO_WINDOW_ENV).ok().as_deref())
+}
+
+#[cfg(target_os = "linux")]
+fn env_value(key: &str) -> String {
+    env::var(key).unwrap_or_else(|_| "<unset>".to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{decide_workaround, SkipReason, WorkaroundDecision};
+    use super::{decide_workaround, should_use_tauri_auto_window, SkipReason, WorkaroundDecision};
 
     #[test]
     fn enables_dmabuf_workaround_for_wayland_by_default() {
@@ -141,5 +194,16 @@ mod tests {
             decide_workaround(None, false, false, None),
             WorkaroundDecision::Skip(SkipReason::NotWayland)
         );
+    }
+
+    #[test]
+    fn tauri_auto_window_is_opt_in() {
+        assert!(!should_use_tauri_auto_window(None));
+        assert!(!should_use_tauri_auto_window(Some("")));
+        assert!(!should_use_tauri_auto_window(Some("0")));
+        assert!(should_use_tauri_auto_window(Some("1")));
+        assert!(should_use_tauri_auto_window(Some("true")));
+        assert!(should_use_tauri_auto_window(Some("yes")));
+        assert!(should_use_tauri_auto_window(Some("on")));
     }
 }

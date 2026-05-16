@@ -57,6 +57,7 @@ mod windows_utils;
 pub fn run() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     diagnostics::init_tracing();
+    diagnostics::install_panic_hook();
     diagnostics::log_process_startup();
 
     #[cfg(target_os = "linux")]
@@ -85,6 +86,16 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_mcp_bridge::init());
     }
 
+    #[cfg(target_os = "linux")]
+    let context = {
+        let mut context = tauri::generate_context!();
+        linux_webkit::configure_startup_window_creation(&mut context);
+        context
+    };
+    #[cfg(not(target_os = "linux"))]
+    let context = tauri::generate_context!();
+
+    tracing::info!("Building Tauri application");
     let build_result = builder
         .invoke_handler(tauri::generate_handler![
             // providers
@@ -332,6 +343,8 @@ pub fn run() {
             commands::skills::check_skill_updates,
         ])
         .setup(|app| {
+            tracing::info!("AQBot setup closure entered");
+
             // Force overlay (auto-hide) scrollbar style on macOS.
             // Apps linked against older SDKs (e.g. macOS 15 CI builds) may
             // fall back to classic native scrollbars, ignoring CSS
@@ -517,12 +530,17 @@ pub fn run() {
                 let _ = rt.block_on(aqbot_core::repo::agent_session::reset_running_sessions(&sea_db));
             }
 
-            if let Some(main_window) = app.get_webview_window("main") {
-                tracing::info!("AQBot main window found during setup");
-                window_lifecycle::configure_main_window(app.handle(), &main_window);
-                tracing::info!("AQBot main window configured");
-            } else {
-                tracing::warn!("AQBot main window was not found during setup");
+            if let Err(err) = window_lifecycle::ensure_main_window_for_setup(app.handle()) {
+                tracing::error!(
+                    error = %err,
+                    "Failed to ensure AQBot main window during setup"
+                );
+                #[cfg(target_os = "linux")]
+                diagnostics::show_linux_startup_error_dialog(&format!(
+                    "AQBot 主窗口创建失败：{}",
+                    err
+                ));
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, err).into());
             }
 
             // Initialize auto-backup scheduler if enabled
@@ -728,10 +746,13 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!());
+        .build(context);
 
     let app = match build_result {
-        Ok(app) => app,
+        Ok(app) => {
+            tracing::info!("Tauri application build returned successfully");
+            app
+        }
         Err(e) => {
             let error_msg = e.to_string();
             tracing::error!("Failed to build Tauri application: {}", error_msg);
@@ -763,6 +784,7 @@ pub fn run() {
         }
     };
 
+    tracing::info!("Starting Tauri application event loop");
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = &event {
             let state = app.state::<AppState>();
