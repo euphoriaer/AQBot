@@ -906,6 +906,72 @@ describe('conversationStore pagination', () => {
     vi.useRealTimers();
   });
 
+  it('keeps a final no-content stream complete when the database row is still partial', async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, (event: unknown) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+    const { useConversationStore } = await import('../conversationStore');
+
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      streaming: true,
+      streamingMessageId: 'temp-assistant-1',
+      streamingConversationId: 'conv-1',
+      messages: [
+        {
+          ...makeMessage(2),
+          id: 'temp-assistant-1',
+          role: 'assistant',
+          content: '',
+          status: 'partial',
+        },
+      ],
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_messages_page') {
+        return Promise.resolve(makePage([
+          {
+            ...makeMessage(2),
+            id: 'assistant-1',
+            role: 'assistant',
+            content: '',
+            status: 'partial',
+          },
+        ], false));
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+
+    await useConversationStore.getState().startStreamListening();
+    listeners.get('chat-stream-chunk')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        chunk: {
+          content: '',
+          thinking: null,
+          tool_calls: null,
+          done: true,
+          is_final: true,
+          usage: null,
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(160);
+    await flushPromises();
+
+    const messages = useConversationStore.getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe('assistant-1');
+    expect(messages[0]?.status).toBe('complete');
+    expect(useConversationStore.getState().streaming).toBe(false);
+    expect(useConversationStore.getState().streamingMessageId).toBeNull();
+    vi.useRealTimers();
+  });
+
   it('keeps the initial streaming think tag when later chunks flush separately', async () => {
     vi.useFakeTimers();
     const listeners = new Map<string, (event: unknown) => void>();

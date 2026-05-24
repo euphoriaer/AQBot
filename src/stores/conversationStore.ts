@@ -602,6 +602,28 @@ function collectActiveStreamingMessageIds(
   ));
 }
 
+function rekeyMessageDisplayMap(
+  displayByMessageId: Record<string, string>,
+  fromMessageId: string | null | undefined,
+  toMessageId: string | null | undefined,
+): Record<string, string> {
+  if (
+    !fromMessageId
+    || !toMessageId
+    || fromMessageId === toMessageId
+    || !displayByMessageId[fromMessageId]
+  ) {
+    return displayByMessageId;
+  }
+
+  const next = { ...displayByMessageId };
+  if (!next[toMessageId]) {
+    next[toMessageId] = next[fromMessageId];
+  }
+  delete next[fromMessageId];
+  return next;
+}
+
 function rememberPendingLocalVersionSelection(
   conversationId: string,
   parentMessageId: string,
@@ -3144,35 +3166,55 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             ),
           ),
         );
-        set((s) => ({
-          streaming: false,
-          streamingMessageId: null,
-          streamingConversationId: null,
-          streamActivityByMessageId: removeStreamActivities(
-            s.streamActivityByMessageId,
-            [placeholderMessageId, flushedMessageId, message_id],
-          ),
-          thinkingActiveMessageIds: new Set<string>(),
-          conversations: s.conversations.map((c) =>
-            c.id === conversation_id
-              ? { ...c, message_count: c.message_count + 1 }
-              : c,
-          ),
-          // Update completed message status immediately to prevent "主动停止" tag flash
-          messages: s.messages.map((m) =>
-            preserveMessageIds.includes(m.id) ? { ...m, status: 'complete' as const } : m,
-          ),
-          searchDisplayByMessageId: placeholderMessageId
-            && message_id
-            && placeholderMessageId !== message_id
-            && s.searchDisplayByMessageId[placeholderMessageId]
-            && !s.searchDisplayByMessageId[message_id]
-            ? {
-                ...s.searchDisplayByMessageId,
-                [message_id]: s.searchDisplayByMessageId[placeholderMessageId],
+        set((s) => {
+          const shouldResolveTempPlaceholder = isTemporaryMessageId(placeholderMessageId)
+            && Boolean(message_id)
+            && placeholderMessageId !== message_id;
+          const realMessageAlreadyExists = shouldResolveTempPlaceholder
+            ? s.messages.some((message) => message.id === message_id)
+            : false;
+
+          return {
+            streaming: false,
+            streamingMessageId: null,
+            streamingConversationId: null,
+            streamActivityByMessageId: removeStreamActivities(
+              s.streamActivityByMessageId,
+              [placeholderMessageId, flushedMessageId, message_id],
+            ),
+            thinkingActiveMessageIds: new Set<string>(),
+            conversations: s.conversations.map((c) =>
+              c.id === conversation_id
+                ? { ...c, message_count: c.message_count + 1 }
+                : c,
+            ),
+            // Update completed message status immediately to prevent "主动停止" tag flash.
+            // If the provider sends final done before any content chunk, the temporary
+            // placeholder has not been resolved yet; resolve it here so the later
+            // fetchMessages preserve pass can keep the local complete status even if
+            // the DB row is still briefly partial.
+            messages: s.messages.flatMap((m) => {
+              if (shouldResolveTempPlaceholder && m.id === placeholderMessageId) {
+                return realMessageAlreadyExists
+                  ? []
+                  : [{ ...m, id: message_id, status: 'complete' as const }];
               }
-            : s.searchDisplayByMessageId,
-        }));
+              return preserveMessageIds.includes(m.id)
+                ? [{ ...m, status: 'complete' as const }]
+                : [m];
+            }),
+            ragDisplayByMessageId: rekeyMessageDisplayMap(
+              s.ragDisplayByMessageId,
+              shouldResolveTempPlaceholder ? placeholderMessageId : null,
+              message_id,
+            ),
+            searchDisplayByMessageId: rekeyMessageDisplayMap(
+              s.searchDisplayByMessageId,
+              shouldResolveTempPlaceholder ? placeholderMessageId : null,
+              message_id,
+            ),
+          };
+        });
         if (get().activeConversationId === conversation_id) {
           // Active conversation — refresh messages then clear buffer
           _streamBuffer = null;
