@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getStreamingLoadingState,
+  getStreamingStatusPresentation,
   hasAqbotDisplayContent,
   hasModelVisibleContent,
   THINKING_LOADING_MARKER,
@@ -8,6 +9,7 @@ import {
   isAssistantStreamingForRender,
   shouldRenderAssistantMarkdownFromContent,
   shouldShowInitialStreamingDots,
+  shouldShowInlineStreamingStatus,
   splitLeadingAqbotDisplayContent,
   stripLeadingAqbotDisplayTags,
 } from '../chatStreaming';
@@ -45,6 +47,82 @@ describe('chat streaming helpers', () => {
     expect(shouldShowInitialStreamingDots(true, '<knowledge-retrieval status="done" data-aqbot="1">[]</knowledge-retrieval>', stripDisplayTags)).toBe(true);
     expect(shouldShowInitialStreamingDots(true, 'answer', stripDisplayTags)).toBe(false);
     expect(shouldShowInitialStreamingDots(false, '', stripDisplayTags)).toBe(false);
+  });
+
+  it('keeps inline streaming status visible while only thinking content is streaming', () => {
+    expect(shouldShowInlineStreamingStatus({
+      isStreaming: true,
+      hasDisplayContent: false,
+      hasActiveThinkingOnly: true,
+      hasRenderedModelText: false,
+    })).toBe(true);
+
+    expect(shouldShowInlineStreamingStatus({
+      isStreaming: true,
+      hasDisplayContent: false,
+      hasActiveThinkingOnly: true,
+      hasRenderedModelText: true,
+    })).toBe(false);
+  });
+
+  it('describes waiting before the first model chunk', () => {
+    expect(getStreamingStatusPresentation({
+      isStreaming: true,
+      activity: {
+        startedAt: 1_000,
+        firstChunkAt: null,
+        lastChunkAt: null,
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        phase: 'waiting_first_packet',
+      },
+      now: 5_000,
+      hasModelText: false,
+    })!.labelKey).toBe('chat.streamingStatus.waitingFirstPacket');
+
+    expect(getStreamingStatusPresentation({
+      isStreaming: true,
+      activity: {
+        startedAt: 1_000,
+        firstChunkAt: null,
+        lastChunkAt: null,
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        phase: 'waiting_first_packet',
+      },
+      now: 12_000,
+      hasModelText: false,
+    })!.labelKey).toBe('chat.streamingStatus.waitingProvider');
+  });
+
+  it('describes active and idle generation after model chunks arrive', () => {
+    expect(getStreamingStatusPresentation({
+      isStreaming: true,
+      activity: {
+        startedAt: 1_000,
+        firstChunkAt: 2_000,
+        lastChunkAt: 9_000,
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        phase: 'streaming',
+      },
+      now: 12_000,
+      hasModelText: true,
+    })!.labelKey).toBe('chat.streamingStatus.generating');
+
+    expect(getStreamingStatusPresentation({
+      isStreaming: true,
+      activity: {
+        startedAt: 1_000,
+        firstChunkAt: 2_000,
+        lastChunkAt: 3_000,
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        phase: 'streaming',
+      },
+      now: 19_000,
+      hasModelText: true,
+    })!.labelKey).toBe('chat.streamingStatus.waitingNextChunk');
   });
 
   it('ignores display-only tags when deciding whether model text exists', () => {

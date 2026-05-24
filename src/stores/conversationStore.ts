@@ -12,6 +12,7 @@ import {
 } from '@/lib/chatMultiModel';
 import { buildContextualSearchQuery, formatSearchContent, buildSearchQueryTag, buildSearchTag } from '@/lib/searchUtils';
 import { buildKnowledgeTag, buildMemoryTag, type RagContextRetrievedEvent } from '@/lib/memoryUtils';
+import { appendStreamErrorToContent, type StreamActivity } from '@/lib/streamStatus';
 import { useProviderStore } from '@/stores/providerStore';
 import { useSearchStore } from '@/stores/searchStore';
 import { useKnowledgeStore } from '@/stores/knowledgeStore';
@@ -98,6 +99,63 @@ const _pendingLocalVersionSelections = new Map<string, PendingLocalVersionSelect
 type ConversationStoreSet = (
   partial: Partial<ConversationState> | ((state: ConversationState) => Partial<ConversationState>)
 ) => void;
+
+function createStreamActivity(providerId?: string | null, modelId?: string | null): StreamActivity {
+  return {
+    startedAt: Date.now(),
+    firstChunkAt: null,
+    lastChunkAt: null,
+    providerId: providerId ?? null,
+    modelId: modelId ?? null,
+    phase: 'waiting_first_packet',
+  };
+}
+
+function updateStreamActivityForChunk(
+  set: ConversationStoreSet,
+  messageId: string,
+  modelId?: string | null,
+  providerId?: string | null,
+) {
+  const now = Date.now();
+  set((s) => {
+    const placeholderId = s.streamingMessageId && s.streamingMessageId !== messageId
+      ? s.streamingMessageId
+      : null;
+    const existing = s.streamActivityByMessageId[messageId]
+      ?? (placeholderId ? s.streamActivityByMessageId[placeholderId] : undefined);
+    const nextActivity: StreamActivity = {
+      ...(existing ?? createStreamActivity(providerId, modelId)),
+      firstChunkAt: existing?.firstChunkAt ?? now,
+      lastChunkAt: now,
+      providerId: providerId ?? existing?.providerId ?? null,
+      modelId: modelId ?? existing?.modelId ?? null,
+      phase: 'streaming',
+    };
+    const next = {
+      ...s.streamActivityByMessageId,
+      [messageId]: nextActivity,
+    };
+    if (placeholderId) {
+      delete next[placeholderId];
+    }
+    return { streamActivityByMessageId: next };
+  });
+}
+
+function removeStreamActivities(
+  activityById: Record<string, StreamActivity>,
+  messageIds: Array<string | null | undefined>,
+): Record<string, StreamActivity> {
+  const ids = messageIds.filter((id): id is string => Boolean(id));
+  if (ids.length === 0) return activityById;
+
+  const next = { ...activityById };
+  for (const id of ids) {
+    delete next[id];
+  }
+  return next;
+}
 
 type ConversationPreferenceState = Pick<
   ConversationState,
@@ -769,6 +827,7 @@ interface ConversationState {
   compressing: boolean;
   streamingMessageId: string | null;
   streamingConversationId: string | null;
+  streamActivityByMessageId: Record<string, StreamActivity>;
   thinkingActiveMessageIds: Set<string>;
   error: string | null;
   /** Whether web search is enabled for messages in the active conversation */
@@ -883,6 +942,8 @@ function appendStreamChunk(
   modelId?: string,
   providerId?: string,
 ) {
+  updateStreamActivityForChunk(set, messageId, modelId, providerId);
+
   // Accumulate into stream buffer only in single-stream mode
   // (parallel multi-model streams would corrupt the shared buffer)
   if (!_isMultiModelActive) {
@@ -1085,6 +1146,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   compressing: false,
   streamingMessageId: null,
   streamingConversationId: null,
+  streamActivityByMessageId: {},
   thinkingActiveMessageIds: new Set<string>(),
   error: null,
   titleGeneratingConversationId: null,
@@ -1763,6 +1825,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       streaming: true,
       streamingConversationId: conversationId,
       streamingMessageId: tempAssistantId,
+      streamActivityByMessageId: {
+        ...s.streamActivityByMessageId,
+        [tempAssistantId]: createStreamActivity(
+          activeConversation?.provider_id,
+          activeConversation?.model_id,
+        ),
+      },
       thinkingActiveMessageIds: new Set<string>(),
     }));
     _pendingUiChunk = null;
@@ -2017,6 +2086,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       streaming: true,
       streamingConversationId: conversationId,
       streamingMessageId: currentMsgId,
+      streamActivityByMessageId: {
+        ...s.streamActivityByMessageId,
+        [currentMsgId]: createStreamActivity(
+          conversation?.provider_id,
+          conversation?.model_id,
+        ),
+      },
     }));
 
     // Set up event listeners BEFORE invoking to avoid race conditions
@@ -2375,6 +2451,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         streaming: true,
         streamingMessageId: tempAssistantId,
         streamingConversationId: conversationId,
+        streamActivityByMessageId: {
+          ...s.streamActivityByMessageId,
+          [tempAssistantId]: createStreamActivity(
+            placeholderAssistant.provider_id,
+            placeholderAssistant.model_id,
+          ),
+        },
         thinkingActiveMessageIds: new Set<string>(),
       };
     });
@@ -2487,6 +2570,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         streaming: true,
         streamingMessageId: tempAssistantId,
         streamingConversationId: conversationId,
+        streamActivityByMessageId: {
+          ...s.streamActivityByMessageId,
+          [tempAssistantId]: createStreamActivity(providerId, modelId),
+        },
         thinkingActiveMessageIds: new Set<string>(),
       };
     });
@@ -3019,6 +3106,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             );
             // Track per-model completion for individual loading indicators
             updated.multiModelDoneMessageIds = [...s.multiModelDoneMessageIds, message_id];
+            updated.streamActivityByMessageId = removeStreamActivities(
+              s.streamActivityByMessageId,
+              [message_id],
+            );
             return updated;
           });
 
@@ -3057,6 +3148,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           streaming: false,
           streamingMessageId: null,
           streamingConversationId: null,
+          streamActivityByMessageId: removeStreamActivities(
+            s.streamActivityByMessageId,
+            [placeholderMessageId, flushedMessageId, message_id],
+          ),
           thinkingActiveMessageIds: new Set<string>(),
           conversations: s.conversations.map((c) =>
             c.id === conversation_id
@@ -3142,6 +3237,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           return {
             multiModelDoneMessageIds: [...s.multiModelDoneMessageIds, message_id],
             streamingMessageId: result.streamingMessageId,
+            streamActivityByMessageId: removeStreamActivities(
+              s.streamActivityByMessageId,
+              [message_id],
+            ),
             messages: result.messages,
           };
         });
@@ -3154,7 +3253,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
       // Only show error if still on the same conversation
       if (get().activeConversationId !== conversation_id) {
-        set({ streaming: false, streamingMessageId: null, streamingConversationId: null, thinkingActiveMessageIds: new Set<string>() });
+        set((s) => ({
+          streaming: false,
+          streamingMessageId: null,
+          streamingConversationId: null,
+          streamActivityByMessageId: removeStreamActivities(
+            s.streamActivityByMessageId,
+            [message_id, s.streamingMessageId],
+          ),
+          thinkingActiveMessageIds: new Set<string>(),
+        }));
         return;
       }
 
@@ -3163,10 +3271,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         streaming: false,
         streamingMessageId: null,
         streamingConversationId: null,
+        streamActivityByMessageId: removeStreamActivities(
+          s.streamActivityByMessageId,
+          [message_id, s.streamingMessageId],
+        ),
         thinkingActiveMessageIds: new Set<string>(),
         messages: s.messages.map(m =>
           m.id === message_id || m.id === s.streamingMessageId
-            ? { ...m, content: errMsg, status: 'error' as const }
+            ? { ...m, content: appendStreamErrorToContent(m.content, errMsg), status: 'error' as const }
             : m
         ),
       }));
@@ -3295,6 +3407,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       streaming: false,
       streamingMessageId: null,
       streamingConversationId: null,
+      streamActivityByMessageId: removeStreamActivities(
+        s.streamActivityByMessageId,
+        [streamMsgId],
+      ),
       thinkingActiveMessageIds: new Set<string>(),
       messages: streamMsgId
         ? s.messages.map(m => m.id === streamMsgId ? { ...m, status: 'partial' as const } : m)

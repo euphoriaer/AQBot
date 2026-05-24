@@ -2,6 +2,7 @@ import type { Message } from '@/types';
 import { stripAqbotTags } from '@/lib/chatMarkdown';
 import { buildSearchQueryTag, buildSearchTag, parseSearchContent } from '@/lib/searchUtils';
 import { splitLeadingAqbotDisplayContent } from './chatStreaming';
+import { splitStreamErrorContent } from '@/lib/streamStatus';
 
 function hasPersistedDisplayTag(content: string): boolean {
   return /<(?:web-search-query|web-search|knowledge-retrieval|memory-retrieval)\b[^>]*data-aqbot=["']1["'][^>]*>/i.test(content);
@@ -42,6 +43,14 @@ export function buildAssistantDisplayContent(message: Message, messages: Message
 }
 
 export function splitAssistantErrorDisplayContent(content: string): { prefix: string; message: string } {
+  const streamError = splitStreamErrorContent(content);
+  if (streamError) {
+    return {
+      prefix: streamError.prefix,
+      message: stripAqbotTags(streamError.error).trim() || streamError.error,
+    };
+  }
+
   const split = splitLeadingAqbotDisplayContent(content);
   const cleanBody = stripAqbotTags(split.body).trim();
   const cleanFullContent = stripAqbotTags(content).trim();

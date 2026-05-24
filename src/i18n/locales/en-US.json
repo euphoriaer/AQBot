@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "This is the last AI reply. You can delete only the reply or include the user message.",
     "deleteThisOnly": "This one only",
     "generating": "Generating…",
+    "streamingStatus": {
+      "waitingFirstPacket": "Waiting for model response",
+      "waitingProvider": "Still waiting for provider",
+      "generating": "Generating",
+      "waitingNextChunk": "Waiting for more content"
+    },
     "loadingConversation": "Loading conversation…",
     "multiModel": {
       "selectTitle": "Select models to respond simultaneously",

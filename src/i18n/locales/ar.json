@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "هذا هو آخر رد للذكاء الاصطناعي. يمكنك حذف الرد فقط أو تضمين رسالة المستخدم أيضاً.",
     "deleteThisOnly": "هذا فقط",
     "generating": "جارٍ التوليد…",
+    "streamingStatus": {
+      "waitingFirstPacket": "في انتظار استجابة النموذج",
+      "waitingProvider": "ما زال ينتظر رد المزوّد",
+      "generating": "جارٍ التوليد",
+      "waitingNextChunk": "في انتظار المزيد من المحتوى"
+    },
     "loadingConversation": "جارٍ تحميل المحادثة…",
     "multiModel": {
       "selectTitle": "اختر النماذج للرد في آنٍ واحد",

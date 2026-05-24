@@ -125,6 +125,82 @@ fn duration_from_timeout_secs(seconds: u64) -> Option<Duration> {
     (seconds > 0).then(|| Duration::from_secs(seconds))
 }
 
+fn build_stream_error_event(
+    conversation_id: &str,
+    message_id: &str,
+    model_id: &str,
+    provider_id: &str,
+    error: String,
+    kind: &str,
+    timeout_secs: Option<u64>,
+) -> ChatStreamErrorEvent {
+    ChatStreamErrorEvent {
+        conversation_id: conversation_id.to_string(),
+        message_id: message_id.to_string(),
+        model_id: Some(model_id.to_string()),
+        provider_id: Some(provider_id.to_string()),
+        error,
+        kind: Some(kind.to_string()),
+        timeout_secs,
+    }
+}
+
+fn build_stream_timeout_error_event(
+    conversation_id: &str,
+    message_id: &str,
+    model_id: &str,
+    provider_id: &str,
+    received_stream_packet: bool,
+    timeout: Duration,
+) -> ChatStreamErrorEvent {
+    let timeout_secs = timeout.as_secs();
+    let (kind, error) = if received_stream_packet {
+        (
+            "idle_timeout",
+            format!("模型响应空闲超时，已超过 {} 秒未收到新内容", timeout_secs),
+        )
+    } else {
+        (
+            "first_packet_timeout",
+            format!("模型首包超时，已超过 {} 秒未收到响应", timeout_secs),
+        )
+    };
+
+    build_stream_error_event(
+        conversation_id,
+        message_id,
+        model_id,
+        provider_id,
+        error,
+        kind,
+        Some(timeout_secs),
+    )
+}
+
+const STREAM_ERROR_CONTENT_MARKER: &str = "<!-- aqbot-stream-error -->";
+
+fn append_stream_error_to_content(content: &str, error: &str) -> String {
+    let trimmed_content = content.trim_end();
+    let trimmed_error = error.trim();
+    if trimmed_content.trim().is_empty() {
+        return trimmed_error.to_string();
+    }
+
+    if let Some((prefix, _)) = trimmed_content.split_once(STREAM_ERROR_CONTENT_MARKER) {
+        return format!(
+            "{}\n\n{}\n{}",
+            prefix.trim_end(),
+            STREAM_ERROR_CONTENT_MARKER,
+            trimmed_error
+        );
+    }
+
+    format!(
+        "{}\n\n{}\n{}",
+        trimmed_content, STREAM_ERROR_CONTENT_MARKER, trimmed_error
+    )
+}
+
 fn resolve_chat_model_params(
     conversation: &Conversation,
     model_param_overrides: Option<&ModelParamOverrides>,
@@ -1149,24 +1225,16 @@ async fn consume_stream(
             Some(timeout) => match tokio::time::timeout(timeout, stream.next()).await {
                 Ok(result) => result,
                 Err(_) => {
-                    let err_msg = if received_stream_packet {
-                        format!(
-                            "模型响应空闲超时，已超过 {} 秒未收到新内容",
-                            timeout.as_secs()
-                        )
-                    } else {
-                        format!("模型首包超时，已超过 {} 秒未收到响应", timeout.as_secs())
-                    };
-                    let _ = app.emit(
-                        "chat-stream-error",
-                        ChatStreamErrorEvent {
-                            conversation_id: conversation_id.to_string(),
-                            message_id: message_id.to_string(),
-                            model_id: Some(model_id.to_string()),
-                            provider_id: Some(provider_id.to_string()),
-                            error: err_msg.clone(),
-                        },
+                    let error_event = build_stream_timeout_error_event(
+                        conversation_id,
+                        message_id,
+                        model_id,
+                        provider_id,
+                        received_stream_packet,
+                        timeout,
                     );
+                    let err_msg = error_event.error.clone();
+                    let _ = app.emit("chat-stream-error", error_event);
                     tracing::error!("[consume_stream] {}", err_msg);
                     stream_error = Some(err_msg);
                     break;
@@ -1273,13 +1341,15 @@ async fn consume_stream(
                     let err_msg = "Provider returned empty response".to_string();
                     let _ = app.emit(
                         "chat-stream-error",
-                        ChatStreamErrorEvent {
-                            conversation_id: conversation_id.to_string(),
-                            message_id: message_id.to_string(),
-                            model_id: Some(model_id.to_string()),
-                            provider_id: Some(provider_id.to_string()),
-                            error: err_msg.clone(),
-                        },
+                        build_stream_error_event(
+                            conversation_id,
+                            message_id,
+                            model_id,
+                            provider_id,
+                            err_msg.clone(),
+                            "empty_response",
+                            None,
+                        ),
                     );
                     tracing::warn!("[consume_stream] Empty response from provider");
                     stream_error = Some(err_msg);
@@ -1326,13 +1396,15 @@ async fn consume_stream(
                 let err_msg = format!("{}", e);
                 let _ = app.emit(
                     "chat-stream-error",
-                    ChatStreamErrorEvent {
-                        conversation_id: conversation_id.to_string(),
-                        message_id: message_id.to_string(),
-                        model_id: Some(model_id.to_string()),
-                        provider_id: Some(provider_id.to_string()),
-                        error: err_msg.clone(),
-                    },
+                    build_stream_error_event(
+                        conversation_id,
+                        message_id,
+                        model_id,
+                        provider_id,
+                        err_msg.clone(),
+                        "provider_error",
+                        None,
+                    ),
                 );
                 tracing::error!("Stream error: {}", e);
                 stream_error = Some(err_msg);
@@ -2516,13 +2588,15 @@ fn spawn_stream_task(
             None => {
                 let _ = app.emit(
                     "chat-stream-error",
-                    ChatStreamErrorEvent {
-                        conversation_id: conversation_id.clone(),
-                        message_id: assistant_message_id.clone(),
-                        model_id: Some(model_id.clone()),
-                        provider_id: Some(provider.id.clone()),
-                        error: format!("Unsupported provider type: {}", registry_key),
-                    },
+                    build_stream_error_event(
+                        &conversation_id,
+                        &assistant_message_id,
+                        &model_id,
+                        &provider.id,
+                        format!("Unsupported provider type: {}", registry_key),
+                        "provider_error",
+                        None,
+                    ),
                 );
                 return;
             }
@@ -2833,6 +2907,9 @@ fn spawn_stream_task(
                 "{}\n\nBase URL: {}\nAPI Path: {}\nModel: {}\nProvider: {} ({:?})",
                 err, base_url, api_path_display, model_id, provider.name, provider.provider_type,
             );
+        } else if had_stream_error {
+            let err = last_stream_error.as_deref().unwrap_or("Unknown error");
+            total_content = append_stream_error_to_content(&total_content, err);
         }
         let token_count = total_usage.as_ref().map(|u| u.completion_tokens);
         let prompt_tokens = total_usage.as_ref().map(|u| u.prompt_tokens);
@@ -4566,6 +4643,50 @@ mod tests {
         let config = stream_timeout_config_from_settings(&settings);
         assert_eq!(config.first_packet, None);
         assert_eq!(config.idle, None);
+    }
+
+    #[test]
+    fn stream_timeout_error_event_identifies_first_packet_timeout() {
+        let event = build_stream_timeout_error_event(
+            "conv-1",
+            "msg-1",
+            "model-1",
+            "provider-1",
+            false,
+            Duration::from_secs(45),
+        );
+
+        assert_eq!(event.error, "模型首包超时，已超过 45 秒未收到响应");
+        assert_eq!(event.kind.as_deref(), Some("first_packet_timeout"));
+        assert_eq!(event.timeout_secs, Some(45));
+    }
+
+    #[test]
+    fn stream_timeout_error_event_identifies_idle_timeout() {
+        let event = build_stream_timeout_error_event(
+            "conv-1",
+            "msg-1",
+            "model-1",
+            "provider-1",
+            true,
+            Duration::from_secs(12),
+        );
+
+        assert_eq!(event.error, "模型响应空闲超时，已超过 12 秒未收到新内容");
+        assert_eq!(event.kind.as_deref(), Some("idle_timeout"));
+        assert_eq!(event.timeout_secs, Some(12));
+    }
+
+    #[test]
+    fn append_stream_error_keeps_partial_content_visible() {
+        let content = append_stream_error_to_content(
+            "已生成的前半段",
+            "模型响应空闲超时，已超过 90 秒未收到新内容",
+        );
+
+        assert!(content.contains("已生成的前半段"));
+        assert!(content.contains("<!-- aqbot-stream-error -->"));
+        assert!(content.contains("模型响应空闲超时"));
     }
 
     #[test]

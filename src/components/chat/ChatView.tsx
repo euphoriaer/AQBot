@@ -58,13 +58,16 @@ import {
   THINKING_LOADING_MARKER,
   closeStreamingThinkBlock,
   getStreamingLoadingState,
+  getStreamingStatusPresentation,
   hasAqbotDisplayContent,
   hasModelVisibleContent,
   isAssistantStreamingForRender,
   shouldRenderAssistantMarkdownFromContent,
   shouldShowInitialStreamingDots,
+  shouldShowInlineStreamingStatus,
   splitLeadingAqbotDisplayContent,
   stripLeadingAqbotDisplayTags,
+  type StreamActivity,
 } from './chatStreaming';
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard';
 import {
@@ -1991,6 +1994,7 @@ export function ChatView() {
   const streaming = useConversationStore((s) => s.streaming);
   const compressing = useConversationStore((s) => s.compressing);
   const streamingMessageId = useConversationStore((s) => s.streamingMessageId);
+  const streamActivityByMessageId = useConversationStore((s) => s.streamActivityByMessageId);
   const multiModelParentId = useConversationStore((s) => s.multiModelParentId);
   const multiModelDoneMessageIds = useConversationStore((s) => s.multiModelDoneMessageIds);
   const thinkingActiveMessageIds = useConversationStore((s) => s.thinkingActiveMessageIds);
@@ -2015,6 +2019,7 @@ export function ChatView() {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [mermaidPreviewSvg, setMermaidPreviewSvg] = useState<string | null>(null);
   const [mermaidPreviewOpen, setMermaidPreviewOpen] = useState(false);
+  const [streamStatusNow, setStreamStatusNow] = useState(() => Date.now());
   const createConversation = useConversationStore((s) => s.createConversation);
   const providers = useProviderStore((s) => s.providers);
   const settings = useSettingsStore((s) => s.settings);
@@ -2311,6 +2316,16 @@ export function ChatView() {
     }
     contentRendererMessageIdsRef.current.add(streamingMessageId);
   }, [streaming, streamingMessageId]);
+
+  useEffect(() => {
+    if (!streaming) {
+      return;
+    }
+
+    setStreamStatusNow(Date.now());
+    const timer = window.setInterval(() => setStreamStatusNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [streaming]);
 
   const syncScrollToBottomVisibility = useCallback(() => {
     const { scrollBox: target } = syncChatScrollRefs();
@@ -3334,9 +3349,42 @@ export function ChatView() {
     };
   }, [activeConversationId, codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, deleteMessageGroup, formatTime, getBubbleVariant, handleEditMessage, isDarkMode, messageApi, messageById, profile.name, regenerateMessage, settings.code_font_family, settings.render_user_markdown, t, token.colorError, token.colorPrimary, userAvatar]);
 
+  const renderStreamingStatusIndicator = useCallback((
+    activity: StreamActivity | undefined,
+    hasModelText: boolean,
+    style?: React.CSSProperties,
+  ) => {
+    const presentation = getStreamingStatusPresentation({
+      isStreaming: streaming,
+      activity,
+      now: streamStatusNow,
+      hasModelText,
+    });
+    if (!presentation) {
+      return null;
+    }
+
+    const color = presentation.tone === 'warning' ? token.colorWarning : token.colorPrimary;
+    return (
+      <span
+        className="aqbot-streaming-status"
+        aria-label={t(presentation.labelKey)}
+        style={{ color, ...style }}
+      >
+        <span className="aqbot-streaming-dots" aria-hidden="true">
+          <span /><span /><span />
+        </span>
+        <Typography.Text style={{ fontSize: 12, color }}>
+          {t(presentation.labelKey)}
+        </Typography.Text>
+      </span>
+    );
+  }, [streaming, streamStatusNow, t, token.colorPrimary, token.colorWarning]);
+
   const aiRole = useCallback((bubbleData: BubbleItemType) => {
     // bubbleData.key is parent_message_id for stable rendering
     const msg = resolveAssistantMessageForBubbleKey(bubbleData.key, assistantByParentId, messageById);
+    const msgActivity = msg?.id ? streamActivityByMessageId[msg.id] : undefined;
     const isStreaming = isAssistantStreamingForRender({
       isStreaming: streaming,
       messageId: msg?.id,
@@ -3389,9 +3437,7 @@ export function ChatView() {
       }
       if (shouldShowInitialStreamingDots(versionIsStreaming, versionContent, stripAqbotTags)) {
         return (
-          <span className="aqbot-streaming-dots" aria-hidden="true">
-            <span /><span /><span />
-          </span>
+          renderStreamingStatusIndicator(streamActivityByMessageId[versionMessage.id], false)
         );
       }
       return (
@@ -3422,6 +3468,13 @@ export function ChatView() {
         const hasDisplayContent = hasAqbotDisplayContent(renderContent) || Boolean(effectiveDisplayPrefix);
         const hasRenderedModelText = hasModelVisibleContent(renderContent, stripAqbotTags);
         const shouldShowInitialDots = renderLoadingState.bubbleLoading && !hasDisplayContent;
+        const hasActiveThinkingOnly = Boolean(msg?.id && thinkingActiveMessageIds.has(msg.id) && !hasRenderedModelText);
+        const shouldShowInlineStatus = shouldShowInlineStreamingStatus({
+          isStreaming,
+          hasDisplayContent,
+          hasActiveThinkingOnly,
+          hasRenderedModelText,
+        });
         const msgMarker = <span data-aqbot-msg={msg?.id} style={{ height: 0, overflow: 'hidden', lineHeight: 0 }} />;
         // Multi-model non-tabs mode: render all versions in side-by-side or stacked layout
         if (isNonTabsMultiModel && parentId && activeConversationId) {
@@ -3481,9 +3534,7 @@ export function ChatView() {
 
         if (!isAgentMsg && shouldShowInitialDots) {
           return (
-            <>{msgMarker}<span className="aqbot-streaming-dots" aria-hidden="true">
-              <span /><span /><span />
-            </span></>
+            <>{msgMarker}{renderStreamingStatusIndicator(msgActivity, false)}</>
           );
         }
 
@@ -3509,9 +3560,7 @@ export function ChatView() {
         // In agent mode: show inline loading dots only when no content AND no permissions/asks yet
         if (isAgentMsg && shouldShowInitialDots && msgPermissions.length === 0 && msgAskUsers.length === 0) {
           return (
-            <>{msgMarker}<span className="aqbot-streaming-dots" aria-hidden="true">
-              <span /><span /><span />
-            </span></>
+            <>{msgMarker}{renderStreamingStatusIndicator(msgActivity, false)}</>
           );
         }
 
@@ -3529,9 +3578,9 @@ export function ChatView() {
               codeFontFamily={settings.code_font_family || undefined}
               displayPrefix={effectiveDisplayPrefix}
             />
-            {!isAgentMsg && isStreaming && hasDisplayContent && !hasRenderedModelText && (
-              <div className="aqbot-streaming-dots" aria-hidden="true" style={{ marginTop: 8 }}>
-                <span /><span /><span />
+            {!isAgentMsg && shouldShowInlineStatus && (
+              <div style={{ marginTop: 8 }}>
+                {renderStreamingStatusIndicator(msgActivity, false)}
               </div>
             )}
             {msgPermissions.map((pr) => {
@@ -3563,8 +3612,8 @@ export function ChatView() {
             ))}
             {/* Show loading dots when agent is streaming but footer dots are NOT showing (no text content yet) */}
             {isAgentMsg && isStreaming && !footerLoading && (
-              <div className="aqbot-streaming-dots" aria-hidden="true" style={{ marginTop: 8 }}>
-                <span /><span /><span />
+              <div style={{ marginTop: 8 }}>
+                {renderStreamingStatusIndicator(msgActivity, hasModelText)}
               </div>
             )}
           </>
@@ -3607,11 +3656,7 @@ export function ChatView() {
               }}
               aria-label={t('chat.generating')}
             >
-              <span className="aqbot-streaming-dots" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </span>
+              {renderStreamingStatusIndicator(msgActivity, true)}
             </div>
           )}
           <AssistantFooter
@@ -3636,15 +3681,11 @@ export function ChatView() {
           }}
           aria-label={t('chat.generating')}
         >
-          <span className="aqbot-streaming-dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
+          {renderStreamingStatusIndicator(msgActivity, true)}
         </div>
       ) : null,
     };
-  }, [activeConversation, activeConversationId, activeMessages, agentPendingPermissions, agentToolCalls, aiContentNodesById, assistantByParentId, codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, deleteMessage, displayModeOverrides, displayVersionOverrides, formatTime, getBubbleVariant, getModelDisplayInfo, handleBranchDisplayedVersion, handleDisplayModeOverride, handleDisplayVersionOverride, handleEditMessage, handleGeneratedVersionCreated, handleMultiModelDetected, handleRegenerateDisplayedVersion, handleSetContextVersion, handleSwitchDisplayedVersionModel, isDarkMode, messageById, messages, multiModelDoneMessageIds, multiModelParentId, multiModelResponseParents, ragDisplayByMessageId, renderConvIconForChat, settings, streaming, streamingMessageId, switchMessageVersion, t, token.colorPrimary, token.colorTextDescription]);
+  }, [activeConversation, activeConversationId, activeMessages, agentPendingPermissions, agentToolCalls, aiContentNodesById, assistantByParentId, codeBlockDarkTheme, codeBlockLightTheme, codeBlockThemes, deleteMessage, displayModeOverrides, displayVersionOverrides, formatTime, getBubbleVariant, getModelDisplayInfo, handleBranchDisplayedVersion, handleDisplayModeOverride, handleDisplayVersionOverride, handleEditMessage, handleGeneratedVersionCreated, handleMultiModelDetected, handleRegenerateDisplayedVersion, handleSetContextVersion, handleSwitchDisplayedVersionModel, isDarkMode, messageById, messages, multiModelDoneMessageIds, multiModelParentId, multiModelResponseParents, ragDisplayByMessageId, renderConvIconForChat, renderStreamingStatusIndicator, searchDisplayByMessageId, settings, streamActivityByMessageId, streaming, streamingMessageId, switchMessageVersion, t, token.colorPrimary, token.colorTextDescription]);
 
   const contextClearRole = useCallback((bubbleData: BubbleItemType) => {
     const msgId = String(bubbleData.content ?? '');
@@ -3864,6 +3905,12 @@ export function ChatView() {
           align-items: center;
           gap: 4px;
           min-height: 16px;
+        }
+        .aqbot-streaming-status {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-height: 18px;
         }
         .aqbot-streaming-dots span {
           width: 6px;

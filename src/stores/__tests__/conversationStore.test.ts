@@ -103,6 +103,7 @@ describe('conversationStore pagination', () => {
       streaming: false,
       streamingMessageId: null,
       streamingConversationId: null,
+      streamActivityByMessageId: {},
       thinkingActiveMessageIds: new Set<string>(),
       error: null,
       searchEnabled: false,
@@ -662,6 +663,127 @@ describe('conversationStore pagination', () => {
     expect(displayById['assistant-1']).toContain('query="AQBot 下载"');
     expect(useConversationStore.getState().messages[0]?.content).toBe('answer');
     vi.useRealTimers();
+  });
+
+  it('tracks stream activity from temporary placeholder to real message id', async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, (event: unknown) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+    const { useConversationStore } = await import('../conversationStore');
+
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      streaming: true,
+      streamingMessageId: 'temp-assistant-1',
+      streamingConversationId: 'conv-1',
+      streamActivityByMessageId: {
+        'temp-assistant-1': {
+          startedAt: 1_000,
+          firstChunkAt: null,
+          lastChunkAt: null,
+          providerId: 'provider-temp',
+          modelId: 'model-temp',
+          phase: 'waiting_first_packet',
+        },
+      },
+      messages: [
+        {
+          ...makeMessage(2),
+          id: 'temp-assistant-1',
+          role: 'assistant',
+          content: '',
+          status: 'partial',
+        },
+      ],
+    });
+
+    vi.setSystemTime(2_000);
+    await useConversationStore.getState().startStreamListening();
+    listeners.get('chat-stream-chunk')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        model_id: 'model-1',
+        provider_id: 'provider-1',
+        chunk: {
+          content: 'answer',
+          thinking: null,
+          tool_calls: null,
+          done: false,
+          usage: null,
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    const activityById = useConversationStore.getState().streamActivityByMessageId;
+    expect(activityById['temp-assistant-1']).toBeUndefined();
+    expect(activityById['assistant-1']).toMatchObject({
+      startedAt: 1_000,
+      firstChunkAt: 2_000,
+      lastChunkAt: 2_000,
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      phase: 'streaming',
+    });
+    vi.useRealTimers();
+  });
+
+  it('keeps partial streamed content when the stream later errors', async () => {
+    const listeners = new Map<string, (event: unknown) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+    const { useConversationStore } = await import('../conversationStore');
+
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      streaming: true,
+      streamingMessageId: 'assistant-1',
+      streamingConversationId: 'conv-1',
+      streamActivityByMessageId: {
+        'assistant-1': {
+          startedAt: 1_000,
+          firstChunkAt: 2_000,
+          lastChunkAt: 3_000,
+          providerId: 'provider-1',
+          modelId: 'model-1',
+          phase: 'streaming',
+        },
+      },
+      messages: [
+        {
+          ...makeMessage(2),
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '已生成的前半段',
+          status: 'partial',
+        },
+      ],
+    });
+
+    await useConversationStore.getState().startStreamListening();
+    listeners.get('chat-stream-error')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        model_id: 'model-1',
+        provider_id: 'provider-1',
+        error: '模型响应空闲超时，已超过 90 秒未收到新内容',
+        kind: 'idle_timeout',
+        timeout_secs: 90,
+      },
+    });
+
+    const message = useConversationStore.getState().messages[0];
+    expect(message?.status).toBe('error');
+    expect(message?.content).toContain('已生成的前半段');
+    expect(message?.content).toContain('模型响应空闲超时');
+    expect(useConversationStore.getState().streamActivityByMessageId['assistant-1']).toBeUndefined();
   });
 
   it('keeps rendered search tags in local assistant content when model thinking starts streaming', async () => {

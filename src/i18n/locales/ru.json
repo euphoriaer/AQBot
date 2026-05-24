@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "Это последний ответ ИИ. Вы можете удалить только ответ или вместе с сообщением пользователя.",
     "deleteThisOnly": "Только это",
     "generating": "Генерация…",
+    "streamingStatus": {
+      "waitingFirstPacket": "Ожидание ответа модели",
+      "waitingProvider": "Всё ещё ожидается ответ провайдера",
+      "generating": "Генерация",
+      "waitingNextChunk": "Ожидание продолжения"
+    },
     "loadingConversation": "Загрузка разговора…",
     "multiModel": {
       "selectTitle": "Выберите модели для одновременного ответа",

@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "これは最後のAI返信です。返信のみ削除するか、ユーザーメッセージも含めて削除するか選択できます。",
     "deleteThisOnly": "これのみ",
     "generating": "生成中…",
+    "streamingStatus": {
+      "waitingFirstPacket": "モデルの応答を待機中",
+      "waitingProvider": "プロバイダーの応答を待機中",
+      "generating": "生成中",
+      "waitingNextChunk": "続きの内容を待機中"
+    },
     "loadingConversation": "会話を読み込み中…",
     "multiModel": {
       "selectTitle": "同時に回答するモデルを選択",

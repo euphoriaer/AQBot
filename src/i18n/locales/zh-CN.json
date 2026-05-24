@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "这是最后一条 AI 回复，您可以选择仅删除回复或连同用户消息一起删除。",
     "deleteThisOnly": "仅此条",
     "generating": "生成中…",
+    "streamingStatus": {
+      "waitingFirstPacket": "等待模型响应",
+      "waitingProvider": "仍在等待供应商返回",
+      "generating": "正在生成",
+      "waitingNextChunk": "等待后续内容"
+    },
     "loadingConversation": "正在加载对话内容…",
     "multiModel": {
       "selectTitle": "选择同时回答的模型",

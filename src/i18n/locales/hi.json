@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "यह अंतिम AI उत्तर है। आप केवल उत्तर हटा सकते हैं या उपयोगकर्ता संदेश सहित भी हटा सकते हैं।",
     "deleteThisOnly": "केवल यह",
     "generating": "उत्पन्न हो रहा है…",
+    "streamingStatus": {
+      "waitingFirstPacket": "मॉडल की प्रतिक्रिया की प्रतीक्षा है",
+      "waitingProvider": "प्रदाता के उत्तर की प्रतीक्षा जारी है",
+      "generating": "उत्पन्न हो रहा है",
+      "waitingNextChunk": "और सामग्री की प्रतीक्षा है"
+    },
     "loadingConversation": "बातचीत लोड हो रही है…",
     "multiModel": {
       "selectTitle": "एक साथ उत्तर देने के लिए मॉडल चुनें",

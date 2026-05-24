@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "Dies ist die letzte KI-Antwort. Sie können nur die Antwort oder auch die Benutzernachricht löschen.",
     "deleteThisOnly": "Nur diese",
     "generating": "Wird generiert…",
+    "streamingStatus": {
+      "waitingFirstPacket": "Warte auf Modellantwort",
+      "waitingProvider": "Warte weiterhin auf Anbieterantwort",
+      "generating": "Wird generiert",
+      "waitingNextChunk": "Warte auf weitere Inhalte"
+    },
     "loadingConversation": "Gespräch wird geladen…",
     "multiModel": {
       "selectTitle": "Modelle für gleichzeitige Antwort auswählen",

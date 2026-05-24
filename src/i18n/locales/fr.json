@@ -223,6 +223,12 @@
     "deleteLastVersionHint": "C'est la dernière réponse IA. Vous pouvez supprimer uniquement la réponse ou également le message utilisateur.",
     "deleteThisOnly": "Celui-ci seulement",
     "generating": "Génération en cours…",
+    "streamingStatus": {
+      "waitingFirstPacket": "En attente de la réponse du modèle",
+      "waitingProvider": "Toujours en attente du fournisseur",
+      "generating": "Génération en cours",
+      "waitingNextChunk": "En attente de contenu supplémentaire"
+    },
     "loadingConversation": "Chargement de la conversation…",
     "multiModel": {
       "selectTitle": "Sélectionner les modèles pour répondre simultanément",

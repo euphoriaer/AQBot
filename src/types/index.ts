@@ -534,6 +534,8 @@ export interface ChatStreamErrorEvent {
   model_id?: string;
   provider_id?: string;
   error: string;
+  kind?: 'first_packet_timeout' | 'idle_timeout' | 'provider_error' | 'empty_response' | string;
+  timeout_secs?: number;
 }
 
 export interface TokenUsage {

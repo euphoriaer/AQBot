@@ -1,4 +1,9 @@
 import { normalizeThinkTagsForMarkdown } from '@/lib/thinkTags';
+export {
+  getStreamingStatusPresentation,
+  type StreamActivity,
+  type StreamingStatusPresentation,
+} from '@/lib/streamStatus';
 
 export function getStreamingLoadingState(
   isStreaming: boolean,
@@ -72,6 +77,17 @@ export function shouldShowInitialStreamingDots(
   stripDisplayTags: (content: string) => string,
 ): boolean {
   return isStreaming && !hasModelVisibleContent(content, stripDisplayTags);
+}
+
+export function shouldShowInlineStreamingStatus(input: {
+  isStreaming: boolean;
+  hasDisplayContent: boolean;
+  hasActiveThinkingOnly: boolean;
+  hasRenderedModelText: boolean;
+}): boolean {
+  return input.isStreaming
+    && !input.hasRenderedModelText
+    && (input.hasDisplayContent || input.hasActiveThinkingOnly);
 }
 
 export function hasAqbotDisplayContent(content: unknown): boolean {

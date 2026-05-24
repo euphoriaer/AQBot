@@ -1078,6 +1078,10 @@ pub struct ChatStreamErrorEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

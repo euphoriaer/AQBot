@@ -117,4 +117,13 @@ describe('ChatView assistant display policy', () => {
     expect(display.message).toBe('模型首包超时');
     expect(display.message).not.toContain('[{"title":"A"}]');
   });
+
+  it('splits partial streamed content away from stream error messages', () => {
+    const display = splitAssistantErrorDisplayContent(
+      '已生成的前半段\n\n<!-- aqbot-stream-error -->\n模型响应空闲超时',
+    );
+
+    expect(display.prefix).toBe('已生成的前半段');
+    expect(display.message).toBe('模型响应空闲超时');
+  });
 });
