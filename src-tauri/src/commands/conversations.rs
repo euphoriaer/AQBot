@@ -21,7 +21,8 @@ const SEARCH_QUERY_CURRENT_CHAR_LIMIT: usize = 500;
 const SEARCH_QUERY_MAX_TOKENS: u32 = 96;
 const SEARCH_QUERY_RETRY_MAX_TOKENS: u32 = 1024;
 const MCP_TOOL_RESULT_MAX_BYTES: usize = 50_000;
-const MCP_TOOL_LOOP_EXCEEDED_ERROR: &str = "MCP tool loop exceeded 10 iterations";
+const MCP_TOOL_LOOP_MIN_ITERATIONS: u32 = 1;
+const MCP_TOOL_LOOP_MAX_ITERATIONS: u32 = 100;
 
 fn system_prompt_log_excerpt(prompt: &str) -> &str {
     let end = prompt.floor_char_boundary(prompt.len().min(SYSTEM_PROMPT_LOG_EXCERPT_BYTES));
@@ -123,6 +124,12 @@ fn stream_timeout_config_from_settings(settings: &AppSettings) -> StreamTimeoutC
     }
 }
 
+fn mcp_tool_loop_max_iterations_from_settings(settings: &AppSettings) -> usize {
+    settings
+        .mcp_tool_loop_max_iterations
+        .clamp(MCP_TOOL_LOOP_MIN_ITERATIONS, MCP_TOOL_LOOP_MAX_ITERATIONS) as usize
+}
+
 fn duration_from_timeout_secs(seconds: u64) -> Option<Duration> {
     (seconds > 0).then(|| Duration::from_secs(seconds))
 }
@@ -190,6 +197,26 @@ fn build_stream_error_event(
         kind: Some(kind.to_string()),
         timeout_secs,
     }
+}
+
+fn build_tool_loop_exceeded_error_event(
+    conversation_id: &str,
+    message_id: &str,
+    stream_id: &str,
+    model_id: &str,
+    provider_id: &str,
+    max_iterations: usize,
+) -> ChatStreamErrorEvent {
+    build_stream_error_event(
+        conversation_id,
+        message_id,
+        stream_id,
+        model_id,
+        provider_id,
+        format!("MCP tool loop exceeded {} iterations", max_iterations),
+        "tool_loop_exceeded",
+        None,
+    )
 }
 
 fn build_stream_timeout_error_event(
@@ -2729,7 +2756,7 @@ fn spawn_stream_task(
             }
         };
 
-        const MAX_TOOL_ITERATIONS: usize = 10;
+        let max_tool_iterations = mcp_tool_loop_max_iterations_from_settings(&settings);
         let mut chat_messages = chat_messages;
         let mut iteration = 0;
         let mut total_content = String::new();
@@ -2775,26 +2802,22 @@ fn spawn_stream_task(
 
         loop {
             iteration += 1;
-            if iteration > MAX_TOOL_ITERATIONS {
+            if iteration > max_tool_iterations {
                 tracing::warn!(
                     "Tool call loop exceeded max iterations ({})",
-                    MAX_TOOL_ITERATIONS
+                    max_tool_iterations
                 );
                 had_stream_error = true;
-                last_stream_error = Some(MCP_TOOL_LOOP_EXCEEDED_ERROR.to_string());
-                let _ = app.emit(
-                    "chat-stream-error",
-                    build_stream_error_event(
-                        &conversation_id,
-                        &assistant_message_id,
-                        &stream_id,
-                        &model_id,
-                        &provider.id,
-                        MCP_TOOL_LOOP_EXCEEDED_ERROR.to_string(),
-                        "tool_loop_exceeded",
-                        None,
-                    ),
+                let error_event = build_tool_loop_exceeded_error_event(
+                    &conversation_id,
+                    &assistant_message_id,
+                    &stream_id,
+                    &model_id,
+                    &provider.id,
+                    max_tool_iterations,
                 );
+                last_stream_error = Some(error_event.error.clone());
+                let _ = app.emit("chat-stream-error", error_event);
                 break;
             }
 
@@ -4814,6 +4837,36 @@ mod tests {
         let config = stream_timeout_config_from_settings(&settings);
         assert_eq!(config.first_packet, None);
         assert_eq!(config.idle, None);
+    }
+
+    #[test]
+    fn mcp_tool_loop_limit_clamps_global_settings() {
+        let mut settings = AppSettings::default();
+        assert_eq!(mcp_tool_loop_max_iterations_from_settings(&settings), 10);
+
+        settings.mcp_tool_loop_max_iterations = 0;
+        assert_eq!(mcp_tool_loop_max_iterations_from_settings(&settings), 1);
+
+        settings.mcp_tool_loop_max_iterations = 25;
+        assert_eq!(mcp_tool_loop_max_iterations_from_settings(&settings), 25);
+
+        settings.mcp_tool_loop_max_iterations = 1_000;
+        assert_eq!(mcp_tool_loop_max_iterations_from_settings(&settings), 100);
+    }
+
+    #[test]
+    fn mcp_tool_loop_error_event_includes_configured_limit() {
+        let event = build_tool_loop_exceeded_error_event(
+            "conv-1",
+            "msg-1",
+            "stream-1",
+            "model-1",
+            "provider-1",
+            25,
+        );
+
+        assert_eq!(event.error, "MCP tool loop exceeded 25 iterations");
+        assert_eq!(event.kind.as_deref(), Some("tool_loop_exceeded"));
     }
 
     #[test]

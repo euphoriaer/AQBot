@@ -723,6 +723,8 @@ pub struct AppSettings {
     pub chat_stream_first_packet_timeout_secs: u64,
     /// Timeout between chat stream packets in seconds. 0 disables.
     pub chat_stream_idle_timeout_secs: u64,
+    /// Maximum provider/tool iterations in one MCP tool loop.
+    pub mcp_tool_loop_max_iterations: u32,
     /// Parse PDF/DOC/DOCX attachments and include their text in chat prompts.
     pub document_attachment_reading_enabled: bool,
     /// Include image models in the conversation model selector.
@@ -843,6 +845,7 @@ impl Default for AppSettings {
             inherit_conversation_preferences_on_create: true,
             chat_stream_first_packet_timeout_secs: 180,
             chat_stream_idle_timeout_secs: 90,
+            mcp_tool_loop_max_iterations: 10,
             document_attachment_reading_enabled: false,
             show_image_models_in_model_selector: false,
             multi_model_display_mode: "tabs".to_string(),
@@ -899,6 +902,23 @@ mod app_settings_tests {
 
         assert_eq!(settings.chat_stream_first_packet_timeout_secs, 45);
         assert_eq!(settings.chat_stream_idle_timeout_secs, 12);
+    }
+
+    #[test]
+    fn mcp_tool_loop_max_iterations_defaults_to_10_and_roundtrips() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.mcp_tool_loop_max_iterations, 10);
+
+        let settings: AppSettings = serde_json::from_value(json!({
+            "mcp_tool_loop_max_iterations": 25
+        }))
+        .expect("settings should deserialize");
+
+        assert_eq!(settings.mcp_tool_loop_max_iterations, 25);
+
+        let settings: AppSettings =
+            serde_json::from_value(json!({})).expect("settings should default missing fields");
+        assert_eq!(settings.mcp_tool_loop_max_iterations, 10);
     }
 
     #[test]

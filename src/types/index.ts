@@ -500,6 +500,8 @@ export interface AppSettings {
   chat_stream_first_packet_timeout_secs?: number;
   /** Timeout between chat stream packets in seconds. 0 disables. */
   chat_stream_idle_timeout_secs?: number;
+  /** Maximum provider/tool iterations in one MCP tool loop. Default: 10. */
+  mcp_tool_loop_max_iterations?: number;
   /** Parse PDF/DOC/DOCX attachments and send extracted text to the model. Default: false */
   document_attachment_reading_enabled?: boolean;
   /** Include Image models in the conversation model selector. Default: false */

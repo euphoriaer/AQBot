@@ -441,6 +441,8 @@
     "chatStreamFirstPacketTimeoutDesc": "Maximum seconds to wait for the first streaming response chunk after sending a request.",
     "chatStreamIdleTimeout": "Idle Timeout",
     "chatStreamIdleTimeoutDesc": "Maximum seconds allowed between response chunks after streaming has started.",
+    "mcpToolLoopMaxIterations": "MCP Tool Loop Max Iterations",
+    "mcpToolLoopMaxIterationsDesc": "Limits how many consecutive MCP tool-call rounds a single response may run. Higher values can increase latency, token usage, and tool execution cost.",
     "additionalFeatures": "Additional Features",
     "documentAttachmentReading": "Read document attachments",
     "documentAttachmentReadingDesc": "When enabled, PDF, DOC, and DOCX attachments are parsed into text and sent to the model. They are not added to knowledge bases.",

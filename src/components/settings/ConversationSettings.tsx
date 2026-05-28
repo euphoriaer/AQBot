@@ -12,6 +12,12 @@ function normalizeTimeoutSeconds(value: number | string | null) {
   return Math.max(0, Math.floor(numericValue));
 }
 
+function normalizeMcpToolLoopMaxIterations(value: number | string | null) {
+  const numericValue = typeof value === 'number' ? value : Number(value ?? 10);
+  if (!Number.isFinite(numericValue)) return 10;
+  return Math.min(100, Math.max(1, Math.floor(numericValue)));
+}
+
 export function ConversationSettings() {
   const { t } = useTranslation();
   const settings = useSettingsStore((s) => s.settings);
@@ -198,6 +204,26 @@ export function ConversationSettings() {
           <Switch
             checked={settings.show_image_models_in_model_selector ?? false}
             onChange={(checked) => saveSettings({ show_image_models_in_model_selector: checked })}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <div>
+            <div>{t('settings.mcpToolLoopMaxIterations')}</div>
+            <div style={{ fontSize: 12, color: token.colorTextDescription }}>
+              {t('settings.mcpToolLoopMaxIterationsDesc')}
+            </div>
+          </div>
+          <InputNumber
+            aria-label={t('settings.mcpToolLoopMaxIterations')}
+            min={1}
+            max={100}
+            step={1}
+            value={settings.mcp_tool_loop_max_iterations ?? 10}
+            onChange={(value) => saveSettings({
+              mcp_tool_loop_max_iterations: normalizeMcpToolLoopMaxIterations(value),
+            })}
+            style={{ width: 120 }}
           />
         </div>
       </SettingsGroup>

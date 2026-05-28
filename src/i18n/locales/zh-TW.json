@@ -441,6 +441,8 @@
     "chatStreamFirstPacketTimeoutDesc": "送出請求後等待第一段串流回應的最大秒數。",
     "chatStreamIdleTimeout": "閒置逾時",
     "chatStreamIdleTimeoutDesc": "串流回應開始後，相鄰回應片段之間允許等待的最大秒數。",
+    "mcpToolLoopMaxIterations": "MCP 工具呼叫最大輪次",
+    "mcpToolLoopMaxIterationsDesc": "限制單次回覆中模型連續呼叫 MCP 工具的最大輪次，數值過高會增加耗時、Token 與工具執行成本。",
     "additionalFeatures": "附加功能",
     "documentAttachmentReading": "讀取文件附件",
     "documentAttachmentReadingDesc": "開啟後，PDF、DOC、DOCX 附件會解析為文字並傳送給模型，不會加入知識庫。",

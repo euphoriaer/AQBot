@@ -23,6 +23,8 @@ vi.mock('react-i18next', () => ({
         'settings.chatStreamTimeoutsDesc': '设置模型流式响应的首包和空闲等待时间，填 0 表示不限制。',
         'settings.chatStreamFirstPacketTimeout': '首包超时',
         'settings.chatStreamIdleTimeout': '空闲超时',
+        'settings.mcpToolLoopMaxIterations': 'MCP 工具调用最大轮次',
+        'settings.mcpToolLoopMaxIterationsDesc': '限制单次回复中模型连续调用 MCP 工具的最大轮次，数值过高会增加耗时、Token 与工具执行成本。',
         'settings.chatSidebar': '左侧对话栏',
         'settings.chatSidebarCollapsed': '左侧对话栏默认折叠',
         'settings.chatSidebarCollapsedDesc': '开启后，对话页左侧对话栏会默认收起，聊天区域获得更多横向空间。',
@@ -130,6 +132,7 @@ describe('ConversationSettings', () => {
       show_image_models_in_model_selector: false,
       chat_stream_first_packet_timeout_secs: 180,
       chat_stream_idle_timeout_secs: 90,
+      mcp_tool_loop_max_iterations: 10,
       chat_sidebar_collapsed: false,
     };
   });
@@ -140,9 +143,15 @@ describe('ConversationSettings', () => {
     const text = document.body.textContent ?? '';
     expect(text.indexOf('对话导航')).toBeGreaterThanOrEqual(0);
     expect(text.indexOf('附加功能')).toBeGreaterThan(text.indexOf('对话导航'));
+    const additionalGroup = screen.getByText('附加功能').parentElement?.parentElement;
+    const timeoutGroup = screen.getByText('流式响应超时').parentElement?.parentElement;
+    expect(additionalGroup).not.toBeNull();
+    expect(timeoutGroup).not.toBeNull();
     expect(screen.getByText('模型选择器中显示绘画模型')).toBeInTheDocument();
     expect(screen.getByText('读取文档附件')).toBeInTheDocument();
     expect(screen.getByText('开启后，PDF、DOC、DOCX 附件会解析为文本并发送给模型，不会加入知识库。')).toBeInTheDocument();
+    expect(within(additionalGroup as HTMLElement).getByText('MCP 工具调用最大轮次')).toBeInTheDocument();
+    expect(within(timeoutGroup as HTMLElement).queryByText('MCP 工具调用最大轮次')).not.toBeInTheDocument();
   });
 
   it('saves the document attachment reading setting when toggled', () => {
@@ -205,6 +214,28 @@ describe('ConversationSettings', () => {
     fireEvent.change(screen.getByLabelText('空闲超时'), { target: { value: '0' } });
     expect(mocks.saveSettings).toHaveBeenCalledWith({
       chat_stream_idle_timeout_secs: 0,
+    });
+  });
+
+  it('saves MCP tool loop iteration settings from conversation settings', () => {
+    render(<ConversationSettings />);
+
+    expect(screen.getByText('MCP 工具调用最大轮次')).toBeInTheDocument();
+    expect(screen.getByText('限制单次回复中模型连续调用 MCP 工具的最大轮次，数值过高会增加耗时、Token 与工具执行成本。')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('MCP 工具调用最大轮次'), { target: { value: '25' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({
+      mcp_tool_loop_max_iterations: 25,
+    });
+
+    fireEvent.change(screen.getByLabelText('MCP 工具调用最大轮次'), { target: { value: '' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({
+      mcp_tool_loop_max_iterations: 10,
+    });
+
+    fireEvent.change(screen.getByLabelText('MCP 工具调用最大轮次'), { target: { value: '1000' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({
+      mcp_tool_loop_max_iterations: 100,
     });
   });
 
