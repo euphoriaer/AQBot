@@ -72,6 +72,12 @@ vi.mock('@lobehub/icons', () => ({
   ModelIcon: () => <span data-testid="model-icon" />,
 }));
 
+vi.mock('../ConversationModelIcon', () => ({
+  ConversationModelIcon: ({ model, size }: { model: string; size: number }) => (
+    <span data-testid="conversation-model-icon" data-model={model} data-size={size} />
+  ),
+}));
+
 vi.mock('@/lib/providerIcons', () => ({
   SmartProviderIcon: () => <span data-testid="provider-icon" />,
 }));
@@ -289,5 +295,15 @@ describe('ModelSelector', () => {
 
     expect(screen.getByText('chat.pinnedModels')).toBeInTheDocument();
     expect(screen.getAllByText('GPT Image 2').length).toBeGreaterThan(0);
+  });
+
+  it('uses the centered conversation model fallback in the current model trigger', () => {
+    conversations = [makeConversation({ model_id: 'unknown-model', provider_id: 'missing-provider' })];
+
+    render(<ModelSelector />);
+
+    const icon = screen.getByTestId('conversation-model-icon');
+    expect(icon).toHaveAttribute('data-model', 'unknown-model');
+    expect(icon).toHaveAttribute('data-size', '16');
   });
 });

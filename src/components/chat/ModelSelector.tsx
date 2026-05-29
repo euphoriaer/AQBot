@@ -9,6 +9,7 @@ import { getShortcutBinding, formatShortcutForDisplay } from '@/lib/shortcuts';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { getVisibleModelCapabilities } from '@/lib/modelCapabilities';
 import type { ModelCapability, Model } from '@/types';
+import { ConversationModelIcon } from './ConversationModelIcon';
 
 const PINNED_MODELS_KEY = 'aqbot_pinned_models';
 
@@ -455,7 +456,7 @@ export function ModelSelector({ style, onSelect, overrideCurrentModel, children,
         >
           {currentModel && (
             <>
-              <ModelIcon model={currentModel.mid} size={16} type="avatar" />
+              <ConversationModelIcon model={currentModel.mid} size={16} />
               {currentModel.providerName && (
                 <Tag style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px', color: token.colorPrimary, backgroundColor: token.colorPrimaryBg, border: 'none' }}>{currentModel.providerName}</Tag>
               )}
