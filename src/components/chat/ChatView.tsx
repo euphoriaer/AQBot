@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useRef, useState, useEffect } from 'react';
+import React, { useMemo, useCallback, useRef, useState, useEffect, useSyncExternalStore } from 'react';
 import { CloseCircleFilled, SyncOutlined } from '@ant-design/icons';
 import { Typography, Button, Dropdown, Input, App, Avatar, Alert, Popconfirm, Popover, theme, Tag, Image, Tooltip, Modal, Spin } from 'antd';
 import type { InputRef } from 'antd';
@@ -20,7 +20,14 @@ import { MermaidBlockHeaderActions } from './MermaidBlockHeaderActions';
 import { InfographicBlockHeaderActions } from './InfographicBlockHeaderActions';
 import { DiagramModeToggle } from './DiagramModeToggle';
 import { MermaidZoomControls } from './MermaidZoomControls';
-import { useConversationStore, useProviderStore, useSettingsStore, useAgentStore } from '@/stores';
+import {
+  getLiveStreamContent,
+  subscribeLiveStreamContent,
+  useConversationStore,
+  useProviderStore,
+  useSettingsStore,
+  useAgentStore,
+} from '@/stores';
 import { setupAgentEventListeners } from '@/stores/agentStore';
 import { useUserProfileStore } from '@/stores/userProfileStore';
 import { useResolvedDarkMode } from '@/hooks/useResolvedDarkMode';
@@ -119,10 +126,40 @@ const CHAT_RENDER_BATCH_PROPS = {
   renderBatchSize: 48,
   renderBatchDelay: 24,
   renderBatchBudgetMs: 4,
-  maxLiveNodes: Infinity,
-  liveNodeBuffer: 24,
+  maxLiveNodes: 480,
+  liveNodeBuffer: 96,
 } as const;
 const USER_SCROLL_INTENT_GRACE_MS = 250;
+
+function useLiveStreamContent(messageId: string | null | undefined, enabled: boolean): string | undefined {
+  const subscribedMessageId = enabled ? messageId : null;
+  return useSyncExternalStore(
+    useCallback(
+      (listener) => subscribeLiveStreamContent(subscribedMessageId, listener),
+      [subscribedMessageId],
+    ),
+    useCallback(
+      () => getLiveStreamContent(subscribedMessageId),
+      [subscribedMessageId],
+    ),
+    () => undefined,
+  );
+}
+
+function StreamingAssistantContent({
+  messageId,
+  baseContent,
+  isStreaming,
+  children,
+}: {
+  messageId: string | null | undefined;
+  baseContent: string;
+  isStreaming: boolean;
+  children: (content: string) => React.ReactNode;
+}) {
+  const liveContent = useLiveStreamContent(messageId, isStreaming);
+  return <>{children(liveContent ?? baseContent)}</>;
+}
 
 // ── Attachment preview component ────────────────────────────────────────
 
@@ -3499,38 +3536,54 @@ export function ChatView() {
         streamingMessageId,
         status: versionMessage.status,
       });
-      const versionContent = closeStreamingThinkBlock(
-        buildAssistantDisplayContent(versionMessage, activeMessages),
+      const buildVersionContent = (content: string) => closeStreamingThinkBlock(
+        buildAssistantDisplayContent({ ...versionMessage, content }, activeMessages),
         versionIsStreaming,
       );
-      if (versionMessage.status === 'error') {
-        return <Alert type="error" message={versionContent} showIcon />;
-      }
-      if (shouldShowInitialStreamingDots(versionIsStreaming, versionContent, stripAssistantAqbotTags)) {
+      const renderVersionNode = (versionContent: string) => {
+        if (versionMessage.status === 'error') {
+          return <Alert type="error" message={versionContent} showIcon />;
+        }
+        if (shouldShowInitialStreamingDots(versionIsStreaming, versionContent, stripAssistantAqbotTags)) {
+          return (
+            renderStreamingStatusIndicator(streamActivityByMessageId[versionMessage.id], false)
+          );
+        }
         return (
-          renderStreamingStatusIndicator(streamActivityByMessageId[versionMessage.id], false)
+          <ChatMessageRenderBoundary
+            fallback={(
+              <MessageRenderFallback
+                content={versionContent}
+                notice={t('chat.messageRenderFallback', { defaultValue: '该消息渲染失败，已切换为纯文本' })}
+              />
+            )}
+          >
+            <AssistantMarkdown
+              content={versionContent}
+              isDarkMode={isDarkMode}
+              isStreaming={versionIsStreaming}
+              codeBlockDarkTheme={codeBlockDarkTheme}
+              codeBlockLightTheme={codeBlockLightTheme}
+              codeBlockThemes={codeBlockThemes}
+              codeFontFamily={settings.code_font_family || undefined}
+            />
+          </ChatMessageRenderBoundary>
+        );
+      };
+
+      if (versionIsStreaming) {
+        return (
+          <StreamingAssistantContent
+            messageId={versionMessage.id}
+            baseContent={versionMessage.content}
+            isStreaming={versionIsStreaming}
+          >
+            {(liveContent) => renderVersionNode(buildVersionContent(liveContent))}
+          </StreamingAssistantContent>
         );
       }
-      return (
-        <ChatMessageRenderBoundary
-          fallback={(
-            <MessageRenderFallback
-              content={versionContent}
-              notice={t('chat.messageRenderFallback', { defaultValue: '该消息渲染失败，已切换为纯文本' })}
-            />
-          )}
-        >
-          <AssistantMarkdown
-            content={versionContent}
-            isDarkMode={isDarkMode}
-            isStreaming={versionIsStreaming}
-            codeBlockDarkTheme={codeBlockDarkTheme}
-            codeBlockLightTheme={codeBlockLightTheme}
-            codeBlockThemes={codeBlockThemes}
-            codeFontFamily={settings.code_font_family || undefined}
-          />
-        </ChatMessageRenderBoundary>
-      );
+
+      return renderVersionNode(buildVersionContent(versionMessage.content));
     };
 
     return {
@@ -3539,183 +3592,202 @@ export function ChatView() {
       avatar: isNonTabsMultiModel ? undefined : renderConvIconForChat(32, msg?.model_id),
       loading: bubbleLoading,
       contentRender: (content: string) => {
-        const renderContent = typeof content === 'string' && content.length > 0
+        const baseRenderContent = typeof content === 'string' && content.length > 0
           ? content
           : (msg?.content ?? '');
-        const renderContentHasSearchDisplay = /<(?:web-search-query|web-search)\b[^>]*data-aqbot=["']1["'][^>]*>/i.test(renderContent);
-        const effectiveDisplayPrefix = `${renderContentHasSearchDisplay ? '' : searchDisplayPrefix ?? ''}${ragDisplayPrefix ?? ''}` || undefined;
-        const renderLoadingState = getStreamingLoadingState(isStreaming, renderContent);
-        const hasDisplayContent = hasAqbotDisplayContent(renderContent) || Boolean(effectiveDisplayPrefix);
-        const hasRenderedModelText = hasModelVisibleContent(renderContent, stripAssistantAqbotTags);
-        const shouldShowInitialDots = renderLoadingState.bubbleLoading && !hasDisplayContent;
-        const hasActiveThinkingOnly = Boolean(msg?.id && thinkingActiveMessageIds.has(msg.id) && !hasRenderedModelText);
-        const shouldShowInlineStatus = shouldShowInlineStreamingStatus({
-          isStreaming,
-          hasDisplayContent,
-          hasActiveThinkingOnly,
-          hasRenderedModelText,
-        });
-        const msgMarker = <span data-aqbot-msg={msg?.id} style={{ height: 0, overflow: 'hidden', lineHeight: 0 }} />;
-        // Multi-model non-tabs mode: render all versions in side-by-side or stacked layout
-        if (isNonTabsMultiModel && parentId && activeConversationId) {
-          // Prefer ref-based versions (from AssistantFooter DB query, includes inactive)
-          // Fall back to store-based versions (only has active during normal load)
-          const refVersions = multiModelVersionsRef.current.get(parentId);
-          const storeVersions = messages.filter(
-            (m) => m.parent_message_id === parentId && m.role === 'assistant',
-          );
-          const allVersions = selectRenderableVersionSet(storeVersions, refVersions);
-          return (
-            <>
-              {msgMarker}
-              <MultiModelDisplay
-                versions={allVersions}
-                activeMessageId={msg!.id}
-                mode={effectiveDisplayMode as 'side-by-side' | 'stacked'}
-                conversationId={activeConversationId}
-                onSwitchVersion={(pid, mid) => switchMessageVersion(activeConversationId, pid, mid)}
-                onDeleteVersion={(mid) => deleteMessage(mid)}
-                onRegenerateVersion={handleRegenerateDisplayedVersion}
-                onEditVersion={(version) => handleEditMessage(version.id, version.content, 'assistant')}
-                onBranchVersion={handleBranchDisplayedVersion}
-                onSwitchModelVersion={handleSwitchDisplayedVersionModel}
-                onSetContextVersion={handleSetContextVersion}
-                onDisplayVersionChange={handleDisplayVersionOverride}
-                displayVersionIdsByModelKey={displayVersionOverrides.get(parentId)}
-                streamingMessageId={streamingMessageId}
-                multiModelDoneMessageIds={multiModelDoneMessageIds}
-                getModelDisplayInfo={getModelDisplayInfo}
-                renderContent={renderVersionContent}
-              />
-            </>
-          );
-        }
+        const renderContentNode = (renderContent: string) => {
+          const renderContentHasSearchDisplay = /<(?:web-search-query|web-search)\b[^>]*data-aqbot=["']1["'][^>]*>/i.test(renderContent);
+          const effectiveDisplayPrefix = `${renderContentHasSearchDisplay ? '' : searchDisplayPrefix ?? ''}${ragDisplayPrefix ?? ''}` || undefined;
+          const renderLoadingState = getStreamingLoadingState(isStreaming, renderContent);
+          const hasDisplayContent = hasAqbotDisplayContent(renderContent) || Boolean(effectiveDisplayPrefix);
+          const hasRenderedModelText = hasModelVisibleContent(renderContent, stripAssistantAqbotTags);
+          const shouldShowInitialDots = renderLoadingState.bubbleLoading && !hasDisplayContent;
+          const hasActiveThinkingOnly = Boolean(msg?.id && thinkingActiveMessageIds.has(msg.id) && !hasRenderedModelText);
+          const shouldShowInlineStatus = shouldShowInlineStreamingStatus({
+            isStreaming,
+            hasDisplayContent,
+            hasActiveThinkingOnly,
+            hasRenderedModelText,
+          });
+          const msgMarker = <span data-aqbot-msg={msg?.id} style={{ height: 0, overflow: 'hidden', lineHeight: 0 }} />;
+          // Multi-model non-tabs mode: render all versions in side-by-side or stacked layout
+          if (isNonTabsMultiModel && parentId && activeConversationId) {
+            // Prefer ref-based versions (from AssistantFooter DB query, includes inactive)
+            // Fall back to store-based versions (only has active during normal load)
+            const refVersions = multiModelVersionsRef.current.get(parentId);
+            const storeVersions = messages.filter(
+              (m) => m.parent_message_id === parentId && m.role === 'assistant',
+            );
+            const allVersions = selectRenderableVersionSet(storeVersions, refVersions);
+            return (
+              <>
+                {msgMarker}
+                <MultiModelDisplay
+                  versions={allVersions}
+                  activeMessageId={msg!.id}
+                  mode={effectiveDisplayMode as 'side-by-side' | 'stacked'}
+                  conversationId={activeConversationId}
+                  onSwitchVersion={(pid, mid) => switchMessageVersion(activeConversationId, pid, mid)}
+                  onDeleteVersion={(mid) => deleteMessage(mid)}
+                  onRegenerateVersion={handleRegenerateDisplayedVersion}
+                  onEditVersion={(version) => handleEditMessage(version.id, version.content, 'assistant')}
+                  onBranchVersion={handleBranchDisplayedVersion}
+                  onSwitchModelVersion={handleSwitchDisplayedVersionModel}
+                  onSetContextVersion={handleSetContextVersion}
+                  onDisplayVersionChange={handleDisplayVersionOverride}
+                  displayVersionIdsByModelKey={displayVersionOverrides.get(parentId)}
+                  streamingMessageId={streamingMessageId}
+                  multiModelDoneMessageIds={multiModelDoneMessageIds}
+                  getModelDisplayInfo={getModelDisplayInfo}
+                  renderContent={renderVersionContent}
+                />
+              </>
+            );
+          }
 
-        if (shouldRenderStandaloneAssistantError(msg?.status, isNonTabsMultiModel)) {
-          const errorDisplay = splitAssistantErrorDisplayContent(renderContent);
-          return (
-            <>
-              {msgMarker}
-              {errorDisplay.prefix && (
-                <ChatMessageRenderBoundary
-                  fallback={(
-                    <MessageRenderFallback
+          if (shouldRenderStandaloneAssistantError(msg?.status, isNonTabsMultiModel)) {
+            const errorDisplay = splitAssistantErrorDisplayContent(renderContent);
+            return (
+              <>
+                {msgMarker}
+                {errorDisplay.prefix && (
+                  <ChatMessageRenderBoundary
+                    fallback={(
+                      <MessageRenderFallback
+                        content={errorDisplay.prefix}
+                        notice={t('chat.messageRenderFallback', { defaultValue: '该消息渲染失败，已切换为纯文本' })}
+                      />
+                    )}
+                  >
+                    <AssistantMarkdown
                       content={errorDisplay.prefix}
-                      notice={t('chat.messageRenderFallback', { defaultValue: '该消息渲染失败，已切换为纯文本' })}
+                      isDarkMode={isDarkMode}
+                      isStreaming={false}
+                      codeBlockDarkTheme={codeBlockDarkTheme}
+                      codeBlockLightTheme={codeBlockLightTheme}
+                      codeBlockThemes={codeBlockThemes}
+                      codeFontFamily={settings.code_font_family || undefined}
                     />
-                  )}
-                >
-                  <AssistantMarkdown
-                    content={errorDisplay.prefix}
-                    isDarkMode={isDarkMode}
-                    isStreaming={false}
-                    codeBlockDarkTheme={codeBlockDarkTheme}
-                    codeBlockLightTheme={codeBlockLightTheme}
-                    codeBlockThemes={codeBlockThemes}
-                    codeFontFamily={settings.code_font_family || undefined}
+                  </ChatMessageRenderBoundary>
+                )}
+                <Alert type="error" message={errorDisplay.message} showIcon />
+              </>
+            );
+          }
+
+          if (!isAgentMsg && shouldShowInitialDots) {
+            return (
+              <>{msgMarker}{renderStreamingStatusIndicator(msgActivity, false)}</>
+            );
+          }
+
+          const isAgentMode = activeConversation?.mode === 'agent';
+          const msgPermissions = isAgentMode && msg && activeConversationId
+            ? Object.values(agentPendingPermissions).filter((pr) =>
+                pr.conversationId === activeConversationId && (
+                  pr.assistantMessageId === msg.id ||
+                  // Fallback: permission emitted before assistant message ID was set
+                  (pr.assistantMessageId === '' && msg.id === streamingMessageId)
+                )
+              )
+            : [];
+          const msgAskUsers = isAgentMode && msg && activeConversationId
+            ? Object.values(agentPendingAskUser).filter((ask) =>
+                ask.conversationId === activeConversationId && (
+                  ask.assistantMessageId === msg.id ||
+                  (ask.assistantMessageId === '' && msg.id === streamingMessageId)
+                )
+              )
+            : [];
+
+          // In agent mode: show inline loading dots only when no content AND no permissions/asks yet
+          if (isAgentMsg && shouldShowInitialDots && msgPermissions.length === 0 && msgAskUsers.length === 0) {
+            return (
+              <>{msgMarker}{renderStreamingStatusIndicator(msgActivity, false)}</>
+            );
+          }
+
+          return (
+            <>
+              {msgMarker}
+              <ChatMessageRenderBoundary
+                fallback={(
+                  <MessageRenderFallback
+                    content={renderContent}
+                    notice={t('chat.messageRenderFallback', { defaultValue: '该消息渲染失败，已切换为纯文本' })}
                   />
-                </ChatMessageRenderBoundary>
+                )}
+              >
+                <AssistantMarkdown
+                  content={renderContent}
+                  nodes={parsedNodes}
+                  isDarkMode={isDarkMode}
+                  isStreaming={isStreaming}
+                  codeBlockDarkTheme={codeBlockDarkTheme}
+                  codeBlockLightTheme={codeBlockLightTheme}
+                  codeBlockThemes={codeBlockThemes}
+                  codeFontFamily={settings.code_font_family || undefined}
+                  displayPrefix={effectiveDisplayPrefix}
+                />
+              </ChatMessageRenderBoundary>
+              {!isAgentMsg && shouldShowInlineStatus && (
+                <div style={{ marginTop: 8 }}>
+                  {renderStreamingStatusIndicator(msgActivity, false)}
+                </div>
               )}
-              <Alert type="error" message={errorDisplay.message} showIcon />
+              {msgPermissions.map((pr) => {
+                const resolvedTc = agentToolCalls[pr.toolUseId];
+                const permStatus = resolvedTc?.approvalStatus === 'approved'
+                  ? 'approved'
+                  : resolvedTc?.approvalStatus === 'denied'
+                    ? 'denied'
+                    : 'pending';
+                return (
+                  <PermissionCard
+                    key={pr.toolUseId}
+                    conversationId={pr.conversationId}
+                    toolUseId={pr.toolUseId}
+                    toolName={pr.toolName}
+                    input={pr.input}
+                    status={permStatus}
+                  />
+                );
+              })}
+              {msgAskUsers.map((ask) => (
+                <AskUserCard
+                  key={ask.askId}
+                  askId={ask.askId}
+                  conversationId={ask.conversationId}
+                  question={ask.question}
+                  options={ask.options}
+                />
+              ))}
+              {/* Show loading dots when agent is streaming but footer dots are NOT showing (no text content yet) */}
+              {isAgentMsg && isStreaming && !footerLoading && (
+                <div style={{ marginTop: 8 }}>
+                  {renderStreamingStatusIndicator(msgActivity, hasModelText)}
+                </div>
+              )}
             </>
           );
-        }
+        };
 
-        if (!isAgentMsg && shouldShowInitialDots) {
+        if (isStreaming && msg?.id) {
           return (
-            <>{msgMarker}{renderStreamingStatusIndicator(msgActivity, false)}</>
-          );
-        }
-
-        const isAgentMode = activeConversation?.mode === 'agent';
-        const msgPermissions = isAgentMode && msg && activeConversationId
-          ? Object.values(agentPendingPermissions).filter((pr) =>
-              pr.conversationId === activeConversationId && (
-                pr.assistantMessageId === msg.id ||
-                // Fallback: permission emitted before assistant message ID was set
-                (pr.assistantMessageId === '' && msg.id === streamingMessageId)
-              )
-            )
-          : [];
-        const msgAskUsers = isAgentMode && msg && activeConversationId
-          ? Object.values(agentPendingAskUser).filter((ask) =>
-              ask.conversationId === activeConversationId && (
-                ask.assistantMessageId === msg.id ||
-                (ask.assistantMessageId === '' && msg.id === streamingMessageId)
-              )
-            )
-          : [];
-
-        // In agent mode: show inline loading dots only when no content AND no permissions/asks yet
-        if (isAgentMsg && shouldShowInitialDots && msgPermissions.length === 0 && msgAskUsers.length === 0) {
-          return (
-            <>{msgMarker}{renderStreamingStatusIndicator(msgActivity, false)}</>
-          );
-        }
-
-        return (
-          <>
-            {msgMarker}
-            <ChatMessageRenderBoundary
-              fallback={(
-                <MessageRenderFallback
-                  content={renderContent}
-                  notice={t('chat.messageRenderFallback', { defaultValue: '该消息渲染失败，已切换为纯文本' })}
-                />
-              )}
+            <StreamingAssistantContent
+              messageId={msg.id}
+              baseContent={baseRenderContent}
+              isStreaming={isStreaming}
             >
-              <AssistantMarkdown
-                content={renderContent}
-                nodes={parsedNodes}
-                isDarkMode={isDarkMode}
-                isStreaming={isStreaming}
-                codeBlockDarkTheme={codeBlockDarkTheme}
-                codeBlockLightTheme={codeBlockLightTheme}
-                codeBlockThemes={codeBlockThemes}
-                codeFontFamily={settings.code_font_family || undefined}
-                displayPrefix={effectiveDisplayPrefix}
-              />
-            </ChatMessageRenderBoundary>
-            {!isAgentMsg && shouldShowInlineStatus && (
-              <div style={{ marginTop: 8 }}>
-                {renderStreamingStatusIndicator(msgActivity, false)}
-              </div>
-            )}
-            {msgPermissions.map((pr) => {
-              const resolvedTc = agentToolCalls[pr.toolUseId];
-              const permStatus = resolvedTc?.approvalStatus === 'approved'
-                ? 'approved'
-                : resolvedTc?.approvalStatus === 'denied'
-                  ? 'denied'
-                  : 'pending';
-              return (
-                <PermissionCard
-                  key={pr.toolUseId}
-                  conversationId={pr.conversationId}
-                  toolUseId={pr.toolUseId}
-                  toolName={pr.toolName}
-                  input={pr.input}
-                  status={permStatus}
-                />
-              );
-            })}
-            {msgAskUsers.map((ask) => (
-              <AskUserCard
-                key={ask.askId}
-                askId={ask.askId}
-                conversationId={ask.conversationId}
-                question={ask.question}
-                options={ask.options}
-              />
-            ))}
-            {/* Show loading dots when agent is streaming but footer dots are NOT showing (no text content yet) */}
-            {isAgentMsg && isStreaming && !footerLoading && (
-              <div style={{ marginTop: 8 }}>
-                {renderStreamingStatusIndicator(msgActivity, hasModelText)}
-              </div>
-            )}
-          </>
-        );
+              {(liveContent) => renderContentNode(closeStreamingThinkBlock(
+                liveContent,
+                thinkingActiveMessageIds.has(msg.id) || isStreaming,
+              ))}
+            </StreamingAssistantContent>
+          );
+        }
+
+        return renderContentNode(baseRenderContent);
       },
       header: (() => {
         if (isNonTabsMultiModel) return null;
@@ -3757,18 +3829,19 @@ export function ChatView() {
               {renderStreamingStatusIndicator(msgActivity, true)}
             </div>
           )}
-          <AssistantFooter
-            msg={msg}
-            conversationId={activeConversationId}
-            assistantCopyText={assistantCopyText}
-            getModelDisplayInfo={getModelDisplayInfo}
-            onEditMessage={handleEditMessage}
-            isStreaming={isStreaming}
-            displayMode={effectiveDisplayMode}
-            onDisplayModeChange={handleDisplayModeOverride}
-            onMultiModelDetected={handleMultiModelDetected}
-            onRegeneratedVersionCreated={handleGeneratedVersionCreated}
-          />
+          {!isStreaming && (
+            <AssistantFooter
+              msg={msg}
+              conversationId={activeConversationId}
+              assistantCopyText={assistantCopyText}
+              getModelDisplayInfo={getModelDisplayInfo}
+              onEditMessage={handleEditMessage}
+              displayMode={effectiveDisplayMode}
+              onDisplayModeChange={handleDisplayModeOverride}
+              onMultiModelDetected={handleMultiModelDetected}
+              onRegeneratedVersionCreated={handleGeneratedVersionCreated}
+            />
+          )}
         </div>
       ) : footerLoading ? (
         <div

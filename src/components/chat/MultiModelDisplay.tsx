@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { Alert, Button, Dropdown, Popconfirm, Tag, Tooltip, Typography, theme } from 'antd';
 import { ArrowLeftRight, Check, ChevronLeft, ChevronRight, Columns2, GitBranch, LayoutList, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
 import { ModelIcon } from '@lobehub/icons';
@@ -8,10 +8,43 @@ import type { Message } from '@/types';
 import { CopyButton } from '@/components/common/CopyButton';
 import { stripAqbotTags } from '@/lib/chatMarkdown';
 import { getMessageVersionGroupKey, selectDisplayVersionsByModel } from '@/lib/chatMultiModel';
-import { useConversationStore } from '@/stores';
+import {
+  getLiveStreamContent,
+  subscribeLiveStreamContent,
+  useConversationStore,
+} from '@/stores';
 import { ModelSelector } from './ModelSelector';
 
 export type MultiModelDisplayMode = 'tabs' | 'side-by-side' | 'stacked';
+
+function useLiveStreamContent(messageId: string | null | undefined, enabled: boolean): string | undefined {
+  const subscribedMessageId = enabled ? messageId : null;
+  return useSyncExternalStore(
+    useCallback(
+      (listener) => subscribeLiveStreamContent(subscribedMessageId, listener),
+      [subscribedMessageId],
+    ),
+    useCallback(
+      () => getLiveStreamContent(subscribedMessageId),
+      [subscribedMessageId],
+    ),
+    () => undefined,
+  );
+}
+
+function MultiModelVersionContent({
+  message,
+  isVersionStreaming,
+  renderContent,
+}: {
+  message: Message;
+  isVersionStreaming: boolean;
+  renderContent: (msg: Message, isVersionStreaming: boolean) => React.ReactNode;
+}) {
+  const liveContent = useLiveStreamContent(message.id, isVersionStreaming);
+  const renderMessage = liveContent === undefined ? message : { ...message, content: liveContent };
+  return <>{renderContent(renderMessage, isVersionStreaming)}</>;
+}
 
 /** Error boundary to prevent white-screen crashes in multi-model display */
 class MultiModelErrorBoundary extends React.Component<
@@ -211,7 +244,14 @@ function MultiModelDisplayInner({
   if (displayVersions.length <= 1) {
     const msg = displayVersions[0];
     if (!msg) return null;
-    return <>{renderContent(msg, isDisplayStreaming && (msg.id === streamingMessageId || msg.status === 'partial'))}</>;
+    const isVersionStreaming = isDisplayStreaming && (msg.id === streamingMessageId || msg.status === 'partial');
+    return (
+      <MultiModelVersionContent
+        message={msg}
+        isVersionStreaming={isVersionStreaming}
+        renderContent={renderContent}
+      />
+    );
   }
 
   const containerStyle: React.CSSProperties =
@@ -330,7 +370,11 @@ function MultiModelDisplayInner({
                 minHeight: 0,
               }}
             >
-              {renderContent(vMsg, isVersionStreaming)}
+              <MultiModelVersionContent
+                message={vMsg}
+                isVersionStreaming={isVersionStreaming}
+                renderContent={renderContent}
+              />
             </div>
             <MultiModelCardActions
               message={vMsg}

@@ -65,7 +65,9 @@ let _streamPrefix = '';
 // conversation.  When the user switches back we trigger a fetchMessages so the
 // final AI response is loaded from the backend.
 const _pendingConversationRefresh = new Set<string>();
-const STREAM_UI_FLUSH_INTERVAL_MS = 16;
+const STREAM_UI_FLUSH_INTERVAL_MS = 32;
+const STREAM_FIRST_UI_FLUSH_DELAY_MS = 0;
+const AGENT_STREAM_UI_FLUSH_INTERVAL_MS = 16;
 interface PendingUiChunk {
   messageId: string;
   conversationId: string;
@@ -75,6 +77,8 @@ interface PendingUiChunk {
 }
 let _pendingUiChunk: PendingUiChunk | null = null;
 let _streamUiFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const _liveStreamContentByMessageId = new Map<string, string>();
+const _liveStreamListenersByMessageId = new Map<string, Set<() => void>>();
 let _activeMessageLoadSeq = 0;
 const _conversationPreferenceSaveSeq = new Map<string, number>();
 const MESSAGE_PAGE_SIZE = 10;
@@ -102,6 +106,96 @@ const _pendingLocalVersionSelections = new Map<string, PendingLocalVersionSelect
 type ConversationStoreSet = (
   partial: Partial<ConversationState> | ((state: ConversationState) => Partial<ConversationState>)
 ) => void;
+
+function emitLiveStreamContentChange(messageId: string | null | undefined) {
+  if (!messageId) return;
+  const listeners = _liveStreamListenersByMessageId.get(messageId);
+  if (!listeners) return;
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+export function getLiveStreamContent(messageId: string | null | undefined): string | undefined {
+  if (!messageId) return undefined;
+  return _liveStreamContentByMessageId.get(messageId);
+}
+
+export function subscribeLiveStreamContent(
+  messageId: string | null | undefined,
+  listener: () => void,
+): () => void {
+  if (!messageId) return () => {};
+  let listeners = _liveStreamListenersByMessageId.get(messageId);
+  if (!listeners) {
+    listeners = new Set();
+    _liveStreamListenersByMessageId.set(messageId, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    const current = _liveStreamListenersByMessageId.get(messageId);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size === 0) {
+      _liveStreamListenersByMessageId.delete(messageId);
+    }
+  };
+}
+
+export function setLiveStreamContent(messageId: string | null | undefined, content: string): void {
+  if (!messageId) return;
+  if (_liveStreamContentByMessageId.get(messageId) === content) return;
+  _liveStreamContentByMessageId.set(messageId, content);
+  emitLiveStreamContentChange(messageId);
+}
+
+export function clearLiveStreamContent(messageId: string | null | undefined): void {
+  if (!messageId) return;
+  if (!_liveStreamContentByMessageId.delete(messageId)) return;
+  emitLiveStreamContentChange(messageId);
+}
+
+function getLiveOrFallbackContent(messageId: string | null | undefined, fallbackContent: string): string {
+  return getLiveStreamContent(messageId) ?? fallbackContent;
+}
+
+function appendLiveStreamContent(
+  messageId: string,
+  incomingContent: string,
+  fallbackContent: string,
+): string {
+  const nextContent = mergeIncomingDisplayChunk(
+    getLiveOrFallbackContent(messageId, fallbackContent),
+    incomingContent,
+  );
+  setLiveStreamContent(messageId, nextContent);
+  return nextContent;
+}
+
+function materializeLiveStreamContent(
+  set: ConversationStoreSet,
+  messageIds: Array<string | null | undefined>,
+) {
+  const ids = Array.from(new Set(messageIds.filter((messageId): messageId is string => (
+    typeof messageId === 'string' && messageId.length > 0
+  ))));
+  if (ids.length === 0) return;
+  const idSet = new Set(ids);
+  set((s) => {
+    let changed = false;
+    const messages = s.messages.map((message) => {
+      if (!idSet.has(message.id)) return message;
+      const liveContent = getLiveStreamContent(message.id);
+      if (liveContent === undefined || liveContent === message.content) return message;
+      changed = true;
+      return { ...message, content: liveContent };
+    });
+    return changed ? { messages } : {};
+  });
+  for (const messageId of ids) {
+    clearLiveStreamContent(messageId);
+  }
+}
 
 function createStreamId(): string {
   return `stream-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
@@ -990,8 +1084,6 @@ function appendStreamChunk(
   modelId?: string,
   providerId?: string,
 ) {
-  updateStreamActivityForChunk(set, messageId, modelId, providerId);
-
   // Accumulate into stream buffer only in single-stream mode
   // (parallel multi-model streams would corrupt the shared buffer)
   if (!_isMultiModelActive) {
@@ -1031,9 +1123,11 @@ function appendStreamChunk(
   _pendingUiChunk.content += content ?? '';
 
   if (_streamUiFlushTimer === null) {
+    const hasVisibleLiveContent = Boolean(getLiveStreamContent(messageId));
+    const delay = hasVisibleLiveContent ? STREAM_UI_FLUSH_INTERVAL_MS : STREAM_FIRST_UI_FLUSH_DELAY_MS;
     _streamUiFlushTimer = setTimeout(() => {
       flushPendingStreamChunk(set, get);
-    }, STREAM_UI_FLUSH_INTERVAL_MS);
+    }, delay);
   }
 }
 
@@ -1055,120 +1149,150 @@ function flushPendingStreamChunk(
     return;
   }
 
-  const resolvedPendingSelections: Array<{ pending: PendingLocalVersionSelection; messageId: string }> = [];
-  set((s) => {
-    // 1. Direct ID match — append to existing message
-    const existing = s.messages.find((m) => m.id === messageId);
-    if (existing) {
-      return {
-        messages: s.messages.map((m) =>
-          m.id === messageId
-            ? {
-                ...m,
-                content: mergeIncomingDisplayChunk(m.content, content ?? ''),
-                // Enrich model info from chunk if missing
-                model_id: m.model_id ?? chunkModelId ?? null,
-                provider_id: m.provider_id ?? chunkProviderId ?? null,
-              }
-            : m,
-        ),
-      };
-    }
+  updateStreamActivityForChunk(set, messageId, chunkModelId, chunkProviderId);
 
-    // 2. ID mismatch but placeholder exists — replace placeholder ID with real one
-    // In multi-model mode, only resolve temp-* placeholders (first model's initial
-    // chunk resolving the placeholder to its real DB ID). Once resolved,
-    // streamingMessageId is a real ID and companion chunks must NOT hijack it —
-    // they fall through to case 3 and create their own message entries.
-    if (s.streamingMessageId && s.streamingMessageId !== messageId) {
-      if (!_isMultiModelActive || s.streamingMessageId.startsWith('temp-')) {
-        const placeholder = s.messages.find((m) => m.id === s.streamingMessageId);
-        if (placeholder) {
-          const pendingSelection = placeholder.parent_message_id
-            ? _pendingLocalVersionSelections.get(placeholder.parent_message_id)
-            : null;
-          if (pendingSelection?.tempMessageId === placeholder.id) {
-            resolvedPendingSelections.push({ pending: pendingSelection, messageId });
-          }
-          const nextRagDisplayByMessageId = s.ragDisplayByMessageId[s.streamingMessageId]
+  const state = get();
+  const resolvedPendingSelections: Array<{ pending: PendingLocalVersionSelection; messageId: string }> = [];
+
+  // 1. Direct ID match: update the per-message live stream store only.
+  // Model/provider enrichment is structural, so it may still touch messages.
+  const existing = state.messages.find((m) => m.id === messageId);
+  if (existing) {
+    appendLiveStreamContent(messageId, content ?? '', existing.content);
+    if (
+      (!existing.model_id && chunkModelId)
+      || (!existing.provider_id && chunkProviderId)
+    ) {
+      set((s) => ({
+        messages: s.messages.map((message) =>
+          message.id === messageId
             ? {
-                ...s.ragDisplayByMessageId,
-                [messageId]: s.ragDisplayByMessageId[s.streamingMessageId],
+                ...message,
+                model_id: message.model_id ?? chunkModelId ?? null,
+                provider_id: message.provider_id ?? chunkProviderId ?? null,
               }
-            : s.ragDisplayByMessageId;
-          const nextSearchDisplayByMessageId = s.searchDisplayByMessageId[s.streamingMessageId]
-            ? {
-                ...s.searchDisplayByMessageId,
-                [messageId]: s.searchDisplayByMessageId[s.streamingMessageId],
-              }
-            : s.searchDisplayByMessageId;
-          return {
-            messages: s.messages.map((m) =>
-              m.id === s.streamingMessageId
-                ? {
-                    ...m,
-                    id: messageId,
-                    content: mergeIncomingDisplayChunk(m.content, content ?? ''),
-                  }
-                : m,
-            ),
-            ragDisplayByMessageId: nextRagDisplayByMessageId,
-            searchDisplayByMessageId: nextSearchDisplayByMessageId,
-            streamingMessageId: messageId,
-          };
+            : message
+        ),
+      }));
+    }
+    return;
+  }
+
+  // 2. ID mismatch but placeholder exists — replace placeholder ID with real one.
+  // Content stays in the live stream store so token-level updates do not drive
+  // the entire messages array.
+  if (state.streamingMessageId && state.streamingMessageId !== messageId) {
+    if (!_isMultiModelActive || state.streamingMessageId.startsWith('temp-')) {
+      const placeholder = state.messages.find((m) => m.id === state.streamingMessageId);
+      if (placeholder) {
+        const baseContent = getLiveStreamContent(messageId)
+          ?? getLiveStreamContent(state.streamingMessageId)
+          ?? placeholder.content;
+        setLiveStreamContent(messageId, mergeIncomingDisplayChunk(baseContent, content ?? ''));
+        clearLiveStreamContent(state.streamingMessageId);
+
+        const pendingSelection = placeholder.parent_message_id
+          ? _pendingLocalVersionSelections.get(placeholder.parent_message_id)
+          : null;
+        if (pendingSelection?.tempMessageId === placeholder.id) {
+          resolvedPendingSelections.push({ pending: pendingSelection, messageId });
         }
+
+        set((s) => ({
+          messages: s.messages.map((message) =>
+            message.id === state.streamingMessageId
+              ? {
+                  ...message,
+                  id: messageId,
+                  model_id: message.model_id ?? chunkModelId ?? null,
+                  provider_id: message.provider_id ?? chunkProviderId ?? null,
+                }
+              : message
+          ),
+          ragDisplayByMessageId: rekeyMessageDisplayMap(
+            s.ragDisplayByMessageId,
+            state.streamingMessageId,
+            messageId,
+          ),
+          searchDisplayByMessageId: rekeyMessageDisplayMap(
+            s.searchDisplayByMessageId,
+            state.streamingMessageId,
+            messageId,
+          ),
+          streamingMessageId: messageId,
+        }));
+        for (const resolvedPendingSelection of resolvedPendingSelections) {
+          resolvePendingLocalVersionSelection(
+            set,
+            get,
+            resolvedPendingSelection.pending,
+            resolvedPendingSelection.messageId,
+          );
+        }
+        return;
       }
     }
+  }
 
-    // 3. No placeholder found — create new assistant message with full buffered content
-    const isMultiModel = _isMultiModelActive;
-    const parentMessageId = isMultiModel ? s.multiModelParentId : null;
-    const pendingSelection = parentMessageId ? _pendingLocalVersionSelections.get(parentMessageId) : null;
-    const pendingPlaceholder = pendingSelection
-      ? s.messages.find((message) =>
-          message.id === pendingSelection.tempMessageId
-          && message.parent_message_id === parentMessageId
-          && message.role === 'assistant'
-          && (message.provider_id ?? null) === (chunkProviderId ?? null)
-          && (message.model_id ?? null) === (chunkModelId ?? null)
-        )
-      : null;
-    const newMessage: Message = {
-      id: messageId,
-      conversation_id: conversationId,
-      role: 'assistant',
-      content: _streamBuffer?.content ?? (content ?? ''),
-      provider_id: chunkProviderId ?? null,
-      model_id: chunkModelId ?? null,
-      token_count: null,
-      attachments: [],
-      thinking: null,
-      tool_calls_json: null,
-      tool_call_id: null,
-      created_at: pendingPlaceholder?.created_at ?? Date.now(),
-      // In multi-model mode: group under the same parent and hide from main view
-      // (only ModelTags pending animation is shown; fetchMessages after completion loads proper data)
-      parent_message_id: parentMessageId,
-      version_index: pendingPlaceholder?.version_index ?? 0,
-      is_active: pendingPlaceholder?.is_active ?? !isMultiModel,
-      status: 'partial',
-    };
-    if (pendingSelection && pendingPlaceholder) {
-      resolvedPendingSelections.push({ pending: pendingSelection, messageId });
-      return {
-        messages: s.messages.map((message) =>
-          message.id === pendingPlaceholder.id ? newMessage : message
-        ),
-        // Don't overwrite streamingMessageId in multi-model mode
-        streamingMessageId: isMultiModel ? s.streamingMessageId : messageId,
-      };
-    }
-    return {
-      messages: [...s.messages, newMessage],
-      // Don't overwrite streamingMessageId in multi-model mode
+  // 3. No placeholder found — create a new assistant message once, then keep
+  // subsequent token content in the live stream store.
+  const isMultiModel = _isMultiModelActive;
+  const parentMessageId = isMultiModel ? state.multiModelParentId : null;
+  const pendingSelection = parentMessageId ? _pendingLocalVersionSelections.get(parentMessageId) : null;
+  const pendingPlaceholder = pendingSelection
+    ? state.messages.find((message) =>
+        message.id === pendingSelection.tempMessageId
+        && message.parent_message_id === parentMessageId
+        && message.role === 'assistant'
+        && (message.provider_id ?? null) === (chunkProviderId ?? null)
+        && (message.model_id ?? null) === (chunkModelId ?? null)
+      )
+    : null;
+  const bufferedContent = !isMultiModel
+    && _streamBuffer
+    && _streamBuffer.conversationId === conversationId
+    && (_streamBuffer.messageId === messageId || _streamBuffer.resolvedId === messageId)
+    ? _streamBuffer.content
+    : undefined;
+  const nextContent = bufferedContent
+    ?? appendLiveStreamContent(messageId, content ?? '', pendingPlaceholder?.content ?? '');
+  if (bufferedContent !== undefined) {
+    setLiveStreamContent(messageId, bufferedContent);
+  }
+  const newMessage: Message = {
+    id: messageId,
+    conversation_id: conversationId,
+    role: 'assistant',
+    content: pendingPlaceholder?.content ?? nextContent,
+    provider_id: chunkProviderId ?? null,
+    model_id: chunkModelId ?? null,
+    token_count: null,
+    attachments: [],
+    thinking: null,
+    tool_calls_json: null,
+    tool_call_id: null,
+    created_at: pendingPlaceholder?.created_at ?? Date.now(),
+    parent_message_id: parentMessageId,
+    version_index: pendingPlaceholder?.version_index ?? 0,
+    is_active: pendingPlaceholder?.is_active ?? !isMultiModel,
+    status: 'partial',
+  };
+
+  if (pendingSelection && pendingPlaceholder) {
+    resolvedPendingSelections.push({ pending: pendingSelection, messageId });
+    set((s) => ({
+      messages: s.messages.map((message) =>
+        message.id === pendingPlaceholder.id ? newMessage : message
+      ),
       streamingMessageId: isMultiModel ? s.streamingMessageId : messageId,
-    };
-  });
+    }));
+  } else {
+    set((s) => ({
+      messages: [...s.messages, newMessage],
+      streamingMessageId: isMultiModel ? s.streamingMessageId : messageId,
+    }));
+  }
+
   for (const resolvedPendingSelection of resolvedPendingSelections) {
     resolvePendingLocalVersionSelection(
       set,
@@ -2231,7 +2355,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const scheduleAgentFlush = () => {
       if (_agentFlushTimer === null) {
-        _agentFlushTimer = setTimeout(flushAgentStreamChunks, STREAM_UI_FLUSH_INTERVAL_MS);
+        _agentFlushTimer = setTimeout(flushAgentStreamChunks, AGENT_STREAM_UI_FLUSH_INTERVAL_MS);
       }
     };
 
@@ -3171,6 +3295,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (_isMultiModelActive) {
           _multiModelTotalRemaining--;
           flushPendingStreamChunk(set, get);
+          materializeLiveStreamContent(set, [message_id, get().streamingMessageId]);
           _streamBuffer = null;
 
           // Clear streamingMessageId and mark completed message as 'complete'
@@ -3223,6 +3348,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
         const placeholderMessageId = get().streamingMessageId;
         flushPendingStreamChunk(set, get);
+        materializeLiveStreamContent(set, [placeholderMessageId, get().streamingMessageId, message_id]);
         const flushedMessageId = get().streamingMessageId ?? message_id;
         // Only preserve real backend IDs — temp placeholders (temp-assistant-*)
         // must NOT be preserved alongside the DB message, otherwise both the
@@ -3331,6 +3457,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       if (!isCurrentStreamEvent(get, stream_id)) return;
 
       flushPendingStreamChunk(set, get);
+      materializeLiveStreamContent(set, [message_id, get().streamingMessageId]);
       _streamBuffer = null; // Clear buffer on error
 
       // Multi-model: treat error as stream completion for this model
@@ -3510,6 +3637,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       _agentStreamSeq++;
     }
     flushPendingStreamChunk(set, get);
+    materializeLiveStreamContent(set, [
+      get().streamingMessageId,
+      _streamBuffer?.messageId,
+      _streamBuffer?.resolvedId,
+    ]);
     _pendingUiChunk = null;
     _streamBuffer = null;
     _pendingConversationRefresh.clear();

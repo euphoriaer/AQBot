@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import type { Message } from '@/types';
 import {
@@ -32,6 +34,29 @@ function makeMessage(overrides: Partial<Message>): Message {
 }
 
 describe('ChatView assistant display policy', () => {
+  it('does not mount AssistantFooter while an assistant message is streaming', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatView.tsx'), 'utf8');
+    const footerBranch = source.match(/footer:\s*msg && activeConversationId \? \([\s\S]*?\) : footerLoading \?/);
+
+    expect(footerBranch?.[0]).toContain('{!isStreaming && (');
+    expect(footerBranch?.[0]).not.toContain('isStreaming={isStreaming}');
+  });
+
+  it('temporarily closes live streaming think content before rendering', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatView.tsx'), 'utf8');
+
+    expect(source).toMatch(/renderContentNode\(\s*closeStreamingThinkBlock\(\s*liveContent,/);
+  });
+
+  it('uses a finite live markdown window instead of placeholder batching', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatView.tsx'), 'utf8');
+    const propsBlock = source.match(/const CHAT_RENDER_BATCH_PROPS = \{[\s\S]*?\} as const;/)?.[0] ?? '';
+
+    expect(propsBlock).toContain('deferNodesUntilVisible: false');
+    expect(propsBlock).toMatch(/maxLiveNodes:\s*[1-9]\d*,/);
+    expect(propsBlock).not.toMatch(/maxLiveNodes:\s*(?:0|Infinity),/);
+  });
+
   it('resolves stable ai bubble keys through their parent message id', () => {
     const assistant = makeMessage({
       id: 'assistant-1',

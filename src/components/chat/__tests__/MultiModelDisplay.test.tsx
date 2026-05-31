@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type React from 'react';
 import type { Message } from '@/types';
-import { useConversationStore } from '@/stores';
+import { clearLiveStreamContent, setLiveStreamContent, useConversationStore } from '@/stores';
 import { MultiModelDisplay } from '../MultiModelDisplay';
 
 vi.mock('react-i18next', () => ({
@@ -106,6 +106,8 @@ describe('MultiModelDisplay', () => {
       streamingConversationId: null,
       streamingMessageId: null,
     });
+    clearLiveStreamContent('assistant-a');
+    clearLiveStreamContent('assistant-b');
   });
 
   it('does not fall back to the error boundary when deleting down to one model', () => {
@@ -139,6 +141,26 @@ describe('MultiModelDisplay', () => {
     });
 
     expect(screen.getByText('streamed token')).toBeInTheDocument();
+  });
+
+  it('updates an inactive streaming card from live stream content without replacing store messages', () => {
+    const modelA = makeMessage({ id: 'assistant-a', model_id: 'model-a', content: 'alpha' });
+    const modelB = makeMessage({ id: 'assistant-b', model_id: 'model-b', content: '', is_active: false, status: 'partial', version_index: 1 });
+    useConversationStore.setState({
+      messages: [modelA, modelB],
+      streaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: null,
+    });
+
+    render(renderDisplay([modelA, modelB]));
+
+    act(() => {
+      setLiveStreamContent('assistant-b', 'streamed token');
+    });
+
+    expect(screen.getByText('streamed token')).toBeInTheDocument();
+    expect(useConversationStore.getState().messages.find((message) => message.id === 'assistant-b')?.content).toBe('');
   });
 
   it('shows the active same-model version in side-by-side mode', () => {

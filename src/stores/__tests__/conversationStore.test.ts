@@ -548,7 +548,7 @@ describe('conversationStore pagination', () => {
       listeners.set(eventName, handler);
       return () => {};
     });
-    const { useConversationStore } = await import('../conversationStore');
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
     const searching = '<knowledge-retrieval status="searching" data-aqbot="1"></knowledge-retrieval>';
 
     useConversationStore.setState({
@@ -604,12 +604,13 @@ describe('conversationStore pagination', () => {
         },
       },
     });
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(35);
 
     const message = useConversationStore.getState().messages[0];
     const displayById = useConversationStore.getState().ragDisplayByMessageId;
     expect(message?.id).toBe('assistant-1');
-    expect(message?.content).toBe('answer');
+    expect(message?.content).toBe('');
+    expect(getLiveStreamContent('assistant-1')).toBe('answer');
     expect(displayById['assistant-1']).toContain('<knowledge-retrieval status="done" data-aqbot="1">');
     expect(displayById['assistant-1']).toContain('"content":"hit"');
     vi.useRealTimers();
@@ -622,7 +623,7 @@ describe('conversationStore pagination', () => {
       listeners.set(eventName, handler);
       return () => {};
     });
-    const { useConversationStore } = await import('../conversationStore');
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
     const display = '<web-search status="done" data-aqbot="1" query="AQBot 下载">[]</web-search>';
 
     useConversationStore.setState({
@@ -658,11 +659,12 @@ describe('conversationStore pagination', () => {
         },
       },
     });
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(35);
 
     const displayById = useConversationStore.getState().searchDisplayByMessageId;
     expect(displayById['assistant-1']).toContain('query="AQBot 下载"');
-    expect(useConversationStore.getState().messages[0]?.content).toBe('answer');
+    expect(useConversationStore.getState().messages[0]?.content).toBe('');
+    expect(getLiveStreamContent('assistant-1')).toBe('answer');
     vi.useRealTimers();
   });
 
@@ -733,6 +735,119 @@ describe('conversationStore pagination', () => {
     vi.useRealTimers();
   });
 
+  it('keeps token chunks in live stream content until the stream completes', async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, (event: unknown) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
+
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      streaming: true,
+      streamingMessageId: 'assistant-1',
+      streamingConversationId: 'conv-1',
+      messages: [
+        {
+          ...makeMessage(2),
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'Hello',
+          status: 'partial',
+        },
+      ],
+    });
+
+    await useConversationStore.getState().startStreamListening();
+    listeners.get('chat-stream-chunk')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        chunk: {
+          content: ' world',
+          thinking: null,
+          tool_calls: null,
+          done: false,
+          usage: null,
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(35);
+
+    expect(getLiveStreamContent('assistant-1')).toBe('Hello world');
+    expect(useConversationStore.getState().messages[0]?.content).toBe('Hello');
+
+    listeners.get('chat-stream-chunk')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        chunk: {
+          content: '',
+          thinking: null,
+          tool_calls: null,
+          done: true,
+          is_final: true,
+          usage: null,
+        },
+      },
+    });
+
+    expect(getLiveStreamContent('assistant-1')).toBeUndefined();
+    expect(useConversationStore.getState().messages[0]?.content).toBe('Hello world');
+    expect(useConversationStore.getState().messages[0]?.status).toBe('complete');
+    vi.useRealTimers();
+  });
+
+  it('migrates live stream content when a temporary assistant id resolves', async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, (event: unknown) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
+
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      streaming: true,
+      streamingMessageId: 'temp-assistant-1',
+      streamingConversationId: 'conv-1',
+      messages: [
+        {
+          ...makeMessage(2),
+          id: 'temp-assistant-1',
+          role: 'assistant',
+          content: '',
+          status: 'partial',
+        },
+      ],
+    });
+
+    await useConversationStore.getState().startStreamListening();
+    listeners.get('chat-stream-chunk')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        chunk: {
+          content: 'answer',
+          thinking: null,
+          tool_calls: null,
+          done: false,
+          usage: null,
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(35);
+
+    expect(getLiveStreamContent('temp-assistant-1')).toBeUndefined();
+    expect(getLiveStreamContent('assistant-1')).toBe('answer');
+    expect(useConversationStore.getState().messages[0]?.id).toBe('assistant-1');
+    expect(useConversationStore.getState().messages[0]?.content).toBe('');
+    vi.useRealTimers();
+  });
+
   it('keeps partial streamed content when the stream later errors', async () => {
     const listeners = new Map<string, (event: unknown) => void>();
     listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
@@ -787,6 +902,68 @@ describe('conversationStore pagination', () => {
     expect(useConversationStore.getState().streamActivityByMessageId['assistant-1']).toBeUndefined();
   });
 
+  it('materializes live stream content before appending stream errors', async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, (event: unknown) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
+
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      streaming: true,
+      streamingMessageId: 'assistant-1',
+      streamingConversationId: 'conv-1',
+      messages: [
+        {
+          ...makeMessage(2),
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '已生成',
+          status: 'partial',
+        },
+      ],
+    });
+
+    await useConversationStore.getState().startStreamListening();
+    listeners.get('chat-stream-chunk')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        chunk: {
+          content: '的前半段',
+          thinking: null,
+          tool_calls: null,
+          done: false,
+          usage: null,
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(35);
+
+    expect(getLiveStreamContent('assistant-1')).toBe('已生成的前半段');
+    expect(useConversationStore.getState().messages[0]?.content).toBe('已生成');
+
+    listeners.get('chat-stream-error')?.({
+      payload: {
+        conversation_id: 'conv-1',
+        message_id: 'assistant-1',
+        error: '模型响应空闲超时',
+        kind: 'idle_timeout',
+        timeout_secs: 90,
+      },
+    });
+
+    const message = useConversationStore.getState().messages[0];
+    expect(getLiveStreamContent('assistant-1')).toBeUndefined();
+    expect(message?.status).toBe('error');
+    expect(message?.content).toContain('已生成的前半段');
+    expect(message?.content).toContain('模型响应空闲超时');
+    vi.useRealTimers();
+  });
+
   it('ignores stale stream events from a previous stream id', async () => {
     vi.useFakeTimers();
     const listeners = new Map<string, (event: unknown) => void>();
@@ -794,7 +971,7 @@ describe('conversationStore pagination', () => {
       listeners.set(eventName, handler);
       return () => {};
     });
-    const { useConversationStore } = await import('../conversationStore');
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
 
     useConversationStore.setState({
       activeConversationId: 'conv-1',
@@ -871,7 +1048,8 @@ describe('conversationStore pagination', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(useConversationStore.getState().streaming).toBe(true);
-    expect(useConversationStore.getState().messages[0]?.content).toBe('current answer');
+    expect(useConversationStore.getState().messages[0]?.content).toBe('current');
+    expect(getLiveStreamContent('assistant-current')).toBe('current answer');
     vi.useRealTimers();
   });
 
@@ -928,7 +1106,7 @@ describe('conversationStore pagination', () => {
       listeners.set(eventName, handler);
       return () => {};
     });
-    const { useConversationStore } = await import('../conversationStore');
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
     const display = '<web-search-query status="done" data-aqbot="1" query="AQBot 产品详情"></web-search-query>\n\n<web-search status="done" data-aqbot="1">[]</web-search>\n\n';
 
     useConversationStore.setState({
@@ -970,7 +1148,7 @@ describe('conversationStore pagination', () => {
     expect(message?.id).toBe('assistant-1');
     expect(message?.content).toContain('<web-search-query status="done"');
     expect(message?.content).toContain('<web-search status="done"');
-    expect(message?.content).toContain('<think data-aqbot="1">');
+    expect(getLiveStreamContent('assistant-1')).toContain('<think data-aqbot="1">');
     expect(useConversationStore.getState().searchDisplayByMessageId['assistant-1']).toContain('AQBot 产品详情');
     vi.useRealTimers();
   });
@@ -1114,7 +1292,7 @@ describe('conversationStore pagination', () => {
       listeners.set(eventName, handler);
       return () => {};
     });
-    const { useConversationStore } = await import('../conversationStore');
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
 
     useConversationStore.setState({
       activeConversationId: 'conv-1',
@@ -1170,10 +1348,11 @@ describe('conversationStore pagination', () => {
         },
       },
     });
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(35);
 
     const message = useConversationStore.getState().messages.find((item) => item.id === 'assistant-1');
-    expect(message?.content).toBe('<think data-aqbot="1">\n嗯，');
+    expect(message?.content).toBe('');
+    expect(getLiveStreamContent('assistant-1')).toBe('<think data-aqbot="1">\n嗯，');
     expect(Array.from(useConversationStore.getState().thinkingActiveMessageIds)).toEqual(['assistant-1']);
     vi.useRealTimers();
   });
@@ -1185,7 +1364,7 @@ describe('conversationStore pagination', () => {
       listeners.set(eventName, handler);
       return () => {};
     });
-    const { useConversationStore } = await import('../conversationStore');
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
     const user = {
       ...makeMessage(1),
       id: 'user-1',
@@ -1261,10 +1440,11 @@ describe('conversationStore pagination', () => {
         },
       },
     });
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(35);
 
     const message = useConversationStore.getState().messages.find((item) => item.id === 'assistant-1');
-    expect(message?.content).toBe('<think data-aqbot="1">\n嗯，');
+    expect(message?.content).toBe('');
+    expect(getLiveStreamContent('assistant-1')).toBe('<think data-aqbot="1">\n嗯，');
     vi.useRealTimers();
   });
 
@@ -2730,7 +2910,7 @@ describe('conversationStore pagination', () => {
       listeners.set(eventName, handler);
       return () => {};
     });
-    const { useConversationStore } = await import('../conversationStore');
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
     const user = {
       ...makeMessage(1),
       id: 'user-1',
@@ -2796,8 +2976,9 @@ describe('conversationStore pagination', () => {
     });
     vi.advanceTimersByTime(20);
 
+    expect(getLiveStreamContent('assistant-c')).toBe('streamed');
     expect(useConversationStore.getState().messages.find((message) => message.id === 'assistant-c')).toMatchObject({
-      content: 'streamed',
+      content: '',
       is_active: false,
       parent_message_id: user.id,
       status: 'partial',

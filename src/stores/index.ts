@@ -1,6 +1,12 @@
 export { useUIStore } from './uiStore';
 export { useProviderStore } from './providerStore';
-export { useConversationStore } from './conversationStore';
+export {
+  clearLiveStreamContent,
+  getLiveStreamContent,
+  setLiveStreamContent,
+  subscribeLiveStreamContent,
+  useConversationStore,
+} from './conversationStore';
 export { useCategoryStore } from './categoryStore';
 export { useSettingsStore } from './settingsStore';
 export { useGatewayStore } from './gatewayStore';
