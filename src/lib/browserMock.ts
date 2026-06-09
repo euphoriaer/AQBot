@@ -997,7 +997,8 @@ export async function handleCommand<T>(cmd: string, args?: Record<string, unknow
       return getStore('mcp_servers', []) as T;
     case 'create_mcp_server': {
       const mcps = getStore<any[]>('mcp_servers', []);
-      const mcp = { id: genId(), ...(args as any), status: 'disconnected', created_at: nowTs(), updated_at: nowTs() };
+      const input = (args as any)?.input ?? args;
+      const mcp = { id: genId(), ...input, status: 'disconnected', created_at: nowTs(), updated_at: nowTs() };
       mcps.push(mcp);
       setStore('mcp_servers', mcps);
       return mcp as T;
@@ -1005,7 +1006,8 @@ export async function handleCommand<T>(cmd: string, args?: Record<string, unknow
     case 'update_mcp_server': {
       const mcps2 = getStore<any[]>('mcp_servers', []);
       const mi = mcps2.findIndex(m => m.id === (args as any)?.id);
-      if (mi >= 0) { Object.assign(mcps2[mi], args, { updated_at: nowTs() }); setStore('mcp_servers', mcps2); return mcps2[mi] as T; }
+      const input = (args as any)?.input ?? {};
+      if (mi >= 0) { Object.assign(mcps2[mi], input, { updated_at: nowTs() }); setStore('mcp_servers', mcps2); return mcps2[mi] as T; }
       return undefined as T;
     }
     case 'delete_mcp_server': {

@@ -3,7 +3,7 @@ use sea_orm::*;
 use crate::entity::{mcp_servers, tool_descriptors};
 use crate::error::{AQBotError, Result};
 use crate::repo::settings;
-use crate::types::{CreateMcpServerInput, McpServer, ToolDescriptor};
+use crate::types::{CreateMcpServerInput, McpServer, ToolDescriptor, UpdateMcpServerInput};
 use crate::utils::gen_id;
 
 // ── Builtin server definitions (not stored in DB) ───────────────────────
@@ -194,7 +194,7 @@ pub async fn create_mcp_server(
 pub async fn update_mcp_server(
     db: &DatabaseConnection,
     id: &str,
-    input: CreateMcpServerInput,
+    input: UpdateMcpServerInput,
 ) -> Result<McpServer> {
     // Builtin servers only support toggling enabled
     if is_builtin_id(id) {
@@ -202,68 +202,55 @@ pub async fn update_mcp_server(
         return set_builtin_enabled(db, id, enabled).await;
     }
 
-    let existing = get_mcp_server(db, id).await?;
-
-    let name = if input.name.is_empty() {
-        existing.name
-    } else {
-        input.name
-    };
-    let transport = if input.transport.is_empty() {
-        existing.transport
-    } else {
-        input.transport
-    };
-    let command = input.command.or(existing.command);
-    let endpoint = input.endpoint.or(existing.endpoint);
-    let enabled = input.enabled.unwrap_or(existing.enabled);
-    let permission_policy = input
-        .permission_policy
-        .unwrap_or(existing.permission_policy);
-
-    let args_json = match input.args {
-        Some(ref a) => Some(serde_json::to_string(a).unwrap_or_default()),
-        None => existing.args_json,
-    };
-    let env_json = match input.env {
-        Some(ref e) => Some(serde_json::to_string(e).unwrap_or_default()),
-        None => existing.env_json,
-    };
-    let discover_timeout_secs = input
-        .discover_timeout_secs
-        .or(existing.discover_timeout_secs);
-    let execute_timeout_secs = input.execute_timeout_secs.or(existing.execute_timeout_secs);
-    let headers_json = input.headers_json.or(existing.headers_json);
-    let icon_type = match input.icon_type {
-        Some(ref v) if v.is_empty() => None,
-        Some(v) => Some(v),
-        None => existing.icon_type,
-    };
-    let icon_value = match input.icon_value {
-        Some(ref v) if v.is_empty() => None,
-        Some(v) => Some(v),
-        None => existing.icon_value,
-    };
-
     let model = mcp_servers::Entity::find_by_id(id)
         .one(db)
         .await?
         .ok_or_else(|| AQBotError::NotFound(format!("McpServer {}", id)))?;
 
     let mut am: mcp_servers::ActiveModel = model.into();
-    am.name = Set(name);
-    am.transport = Set(transport);
-    am.command = Set(command);
-    am.args_json = Set(args_json);
-    am.endpoint = Set(endpoint);
-    am.env_json = Set(env_json);
-    am.enabled = Set(if enabled { 1 } else { 0 });
-    am.permission_policy = Set(permission_policy);
-    am.discover_timeout_secs = Set(discover_timeout_secs);
-    am.execute_timeout_secs = Set(execute_timeout_secs);
-    am.headers_json = Set(headers_json);
-    am.icon_type = Set(icon_type);
-    am.icon_value = Set(icon_value);
+    if let Some(name) = input.name {
+        if !name.is_empty() {
+            am.name = Set(name);
+        }
+    }
+    if let Some(transport) = input.transport {
+        if !transport.is_empty() {
+            am.transport = Set(transport);
+        }
+    }
+    if let Some(command) = input.command {
+        am.command = Set(command.filter(|v| !v.is_empty()));
+    }
+    if let Some(args) = input.args {
+        am.args_json = Set(args.map(|a| serde_json::to_string(&a).unwrap_or_default()));
+    }
+    if let Some(endpoint) = input.endpoint {
+        am.endpoint = Set(endpoint.filter(|v| !v.is_empty()));
+    }
+    if let Some(env) = input.env {
+        am.env_json = Set(env.map(|e| serde_json::to_string(&e).unwrap_or_default()));
+    }
+    if let Some(enabled) = input.enabled {
+        am.enabled = Set(if enabled { 1 } else { 0 });
+    }
+    if let Some(permission_policy) = input.permission_policy {
+        am.permission_policy = Set(permission_policy);
+    }
+    if let Some(discover_timeout_secs) = input.discover_timeout_secs {
+        am.discover_timeout_secs = Set(Some(discover_timeout_secs));
+    }
+    if let Some(execute_timeout_secs) = input.execute_timeout_secs {
+        am.execute_timeout_secs = Set(Some(execute_timeout_secs));
+    }
+    if let Some(headers_json) = input.headers_json {
+        am.headers_json = Set(headers_json.filter(|v| !v.is_empty()));
+    }
+    if let Some(icon_type) = input.icon_type {
+        am.icon_type = Set(icon_type.filter(|v| !v.is_empty()));
+    }
+    if let Some(icon_value) = input.icon_value {
+        am.icon_value = Set(icon_value.filter(|v| !v.is_empty()));
+    }
     am.update(db).await?;
 
     get_mcp_server(db, id).await
@@ -416,4 +403,113 @@ pub async fn find_server_for_tool(
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::create_test_pool;
+    use crate::types::UpdateMcpServerInput;
+
+    fn remote_server_input(headers_json: Option<String>) -> CreateMcpServerInput {
+        CreateMcpServerInput {
+            name: "Remote MCP".into(),
+            transport: "http".into(),
+            command: None,
+            args: None,
+            endpoint: Some("https://example.com/mcp".into()),
+            env: None,
+            enabled: Some(false),
+            permission_policy: Some("ask".into()),
+            source: Some("custom".into()),
+            discover_timeout_secs: Some(30),
+            execute_timeout_secs: Some(30),
+            headers_json,
+            icon_type: None,
+            icon_value: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn update_mcp_server_preserves_headers_when_field_is_omitted() {
+        let h = create_test_pool().await.unwrap();
+        let db = &h.conn;
+        let created = create_mcp_server(
+            db,
+            remote_server_input(Some(r#"{"Authorization":"Bearer old"}"#.into())),
+        )
+        .await
+        .unwrap();
+
+        let updated = update_mcp_server(
+            db,
+            &created.id,
+            UpdateMcpServerInput {
+                name: Some("Renamed MCP".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated.name, "Renamed MCP");
+        assert_eq!(
+            updated.headers_json.as_deref(),
+            Some(r#"{"Authorization":"Bearer old"}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_mcp_server_replaces_headers_when_value_is_provided() {
+        let h = create_test_pool().await.unwrap();
+        let db = &h.conn;
+        let created = create_mcp_server(
+            db,
+            remote_server_input(Some(r#"{"Authorization":"Bearer old"}"#.into())),
+        )
+        .await
+        .unwrap();
+
+        let updated = update_mcp_server(
+            db,
+            &created.id,
+            UpdateMcpServerInput {
+                headers_json: Some(Some(r#"{"Authorization":"Bearer new"}"#.into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            updated.headers_json.as_deref(),
+            Some(r#"{"Authorization":"Bearer new"}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_mcp_server_clears_headers_when_null_is_provided() {
+        let h = create_test_pool().await.unwrap();
+        let db = &h.conn;
+        let created = create_mcp_server(
+            db,
+            remote_server_input(Some(r#"{"Authorization":"Bearer old"}"#.into())),
+        )
+        .await
+        .unwrap();
+
+        update_mcp_server(
+            db,
+            &created.id,
+            UpdateMcpServerInput {
+                headers_json: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let fetched = get_mcp_server(db, &created.id).await.unwrap();
+        assert_eq!(fetched.headers_json, None);
+    }
 }

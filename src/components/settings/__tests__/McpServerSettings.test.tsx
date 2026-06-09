@@ -1,8 +1,8 @@
 import { App } from 'antd';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import McpServerSettings from '../McpServerSettings';
+import type { McpServer } from '@/types';
 
 const loadServers = vi.fn();
 const createServer = vi.fn();
@@ -11,7 +11,18 @@ const deleteServer = vi.fn();
 const loadToolDescriptors = vi.fn();
 const discoverTools = vi.fn();
 
-let mcpState = {
+type McpStoreMockState = {
+  servers: McpServer[];
+  toolDescriptors: Record<string, unknown[]>;
+  loadServers: typeof loadServers;
+  createServer: typeof createServer;
+  updateServer: typeof updateServer;
+  deleteServer: typeof deleteServer;
+  loadToolDescriptors: typeof loadToolDescriptors;
+  discoverTools: typeof discoverTools;
+};
+
+let mcpState: McpStoreMockState = {
   servers: [
     {
       id: 'mcp-1',
@@ -42,7 +53,7 @@ let mcpState = {
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, fallback?: unknown) => (typeof fallback === 'string' ? fallback : key),
   }),
 }));
 
@@ -111,6 +122,139 @@ describe('McpServerSettings', () => {
     });
   });
 
+  it('persists custom headers JSON for HTTP servers on blur', async () => {
+    mcpState = {
+      ...mcpState,
+      servers: [
+        {
+          ...mcpState.servers[0],
+          transport: 'http',
+          endpoint: 'https://example.com/mcp',
+          headersJson: null,
+        },
+      ],
+    };
+
+    render(
+      <App>
+        <McpServerSettings />
+      </App>,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/Authorization=Bearer/);
+    fireEvent.change(textarea, { target: { value: 'Authorization=Bearer token' } });
+    fireEvent.blur(textarea);
+
+    await waitFor(() => {
+      expect(updateServer).toHaveBeenCalledWith('mcp-1', {
+        headersJson: JSON.stringify({ Authorization: 'Bearer token' }),
+      });
+    });
+  });
+
+  it('clears custom headers with null when the HTTP header field is emptied', async () => {
+    mcpState = {
+      ...mcpState,
+      servers: [
+        {
+          ...mcpState.servers[0],
+          transport: 'http',
+          endpoint: 'https://example.com/mcp',
+          headersJson: JSON.stringify({ Authorization: 'Bearer old' }),
+        },
+      ],
+    };
+
+    render(
+      <App>
+        <McpServerSettings />
+      </App>,
+    );
+
+    const textarea = await screen.findByDisplayValue('Authorization=Bearer old');
+    fireEvent.change(textarea, { target: { value: '' } });
+    fireEvent.blur(textarea);
+
+    await waitFor(() => {
+      expect(updateServer).toHaveBeenCalledWith('mcp-1', {
+        headersJson: null,
+      });
+    });
+  });
+
+  it('replaces old custom headers with the latest edited value', async () => {
+    mcpState = {
+      ...mcpState,
+      servers: [
+        {
+          ...mcpState.servers[0],
+          transport: 'http',
+          endpoint: 'https://example.com/mcp',
+          headersJson: JSON.stringify({ Authorization: 'Bearer old' }),
+        },
+      ],
+    };
+
+    render(
+      <App>
+        <McpServerSettings />
+      </App>,
+    );
+
+    const textarea = await screen.findByDisplayValue('Authorization=Bearer old');
+    fireEvent.change(textarea, { target: { value: 'Authorization=Bearer new' } });
+    fireEvent.blur(textarea);
+
+    await waitFor(() => {
+      expect(updateServer).toHaveBeenCalledWith('mcp-1', {
+        headersJson: JSON.stringify({ Authorization: 'Bearer new' }),
+      });
+    });
+  });
+
+  it('imports streamablehttp server config with headers', async () => {
+    createServer.mockResolvedValue(undefined);
+
+    render(
+      <App>
+        <McpServerSettings />
+      </App>,
+    );
+
+    fireEvent.click(screen.getByText('settings.mcpServers.add'));
+    fireEvent.click(await screen.findByText('settings.mcpServers.tabImport'));
+
+    const textarea = screen.getByPlaceholderText('settings.mcpServers.importPlaceholder');
+    fireEvent.change(textarea, {
+      target: {
+        value: JSON.stringify({
+          mcpServers: {
+            'my-coffee': {
+              type: 'streamablehttp',
+              url: 'https://gwmcp.lkcoffee.com/order/user/mcp',
+              headers: {
+                Authorization: 'Bearer xxxx',
+              },
+            },
+          },
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => {
+      expect(createServer).toHaveBeenCalledWith({
+        name: 'my-coffee',
+        transport: 'http',
+        command: undefined,
+        args: undefined,
+        endpoint: 'https://gwmcp.lkcoffee.com/order/user/mcp',
+        enabled: false,
+        headersJson: JSON.stringify({ Authorization: 'Bearer xxxx' }),
+      });
+    });
+  });
+
   it('persists environment variables as env object on blur', async () => {
     render(
       <App>
@@ -119,7 +263,7 @@ describe('McpServerSettings', () => {
     );
 
     const textarea = await screen.findByPlaceholderText('settings.mcpServers.envVarsPlaceholder');
-    await userEvent.type(textarea, 'TAVILY_API_KEY=secret');
+    fireEvent.change(textarea, { target: { value: 'TAVILY_API_KEY=secret' } });
     fireEvent.blur(textarea);
 
     await waitFor(() => {

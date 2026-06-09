@@ -747,7 +747,7 @@
       "resetIcon": "Reset to Default",
       "tabForm": "Form",
       "tabImport": "Import",
-      "importPlaceholder": "Paste JSON config, e.g.:\n{\n  \"mcpServers\": {\n    \"server-name\": {\n      \"command\": \"uvx\",\n      \"args\": [\"mcp-server-fetch\"]\n    }\n  }\n}",
+      "importPlaceholder": "Paste JSON config, e.g.:\n{\n  \"mcpServers\": {\n    \"my-coffee\": {\n      \"type\": \"streamablehttp\",\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer xxx\"\n      }\n    }\n  }\n}",
       "importParseError": "Invalid JSON format",
       "importEmpty": "No valid MCP server config found",
       "importSuccess": "Successfully imported {{count}} server(s)"

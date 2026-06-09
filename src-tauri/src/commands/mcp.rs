@@ -23,7 +23,7 @@ pub async fn create_mcp_server(
 pub async fn update_mcp_server(
     state: State<'_, AppState>,
     id: String,
-    input: CreateMcpServerInput,
+    input: UpdateMcpServerInput,
 ) -> Result<McpServer, String> {
     aqbot_core::repo::mcp_server::update_mcp_server(&state.sea_db, &id, input)
         .await
@@ -105,7 +105,10 @@ pub async fn discover_mcp_tools(
                 .ok_or_else(|| "HTTP server has no endpoint configured".to_string())?;
             tokio::time::timeout(
                 timeout_duration,
-                aqbot_core::mcp_client::discover_tools_http(endpoint),
+                aqbot_core::mcp_client::discover_tools_http(
+                    endpoint,
+                    server.headers_json.as_deref(),
+                ),
             )
             .await
             .map_err(|_| format!("Tool discovery timed out after {}s", timeout_secs))?
@@ -118,7 +121,10 @@ pub async fn discover_mcp_tools(
                 .ok_or_else(|| "SSE server has no endpoint configured".to_string())?;
             tokio::time::timeout(
                 timeout_duration,
-                aqbot_core::mcp_client::discover_tools_sse(endpoint),
+                aqbot_core::mcp_client::discover_tools_sse(
+                    endpoint,
+                    server.headers_json.as_deref(),
+                ),
             )
             .await
             .map_err(|_| format!("Tool discovery timed out after {}s", timeout_secs))?

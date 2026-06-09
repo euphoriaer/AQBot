@@ -71,4 +71,33 @@ describe('browserMock gateway templates', () => {
     const remaining = await handleCommand<any[]>('s3_list_backups');
     expect(remaining).toHaveLength(0);
   });
+
+  it('flattens MCP create input and updates only input fields', async () => {
+    const created = await handleCommand<any>('create_mcp_server', {
+      input: {
+        name: 'Remote MCP',
+        transport: 'http',
+        endpoint: 'https://example.com/mcp',
+        headersJson: JSON.stringify({ Authorization: 'Bearer old' }),
+        enabled: false,
+      },
+    });
+
+    expect(created.name).toBe('Remote MCP');
+    expect(created.transport).toBe('http');
+    expect(created.endpoint).toBe('https://example.com/mcp');
+    expect(created.headersJson).toBe(JSON.stringify({ Authorization: 'Bearer old' }));
+    expect(created.input).toBeUndefined();
+
+    const updated = await handleCommand<any>('update_mcp_server', {
+      id: created.id,
+      input: {
+        headersJson: JSON.stringify({ Authorization: 'Bearer new' }),
+      },
+    });
+
+    expect(updated.id).toBe(created.id);
+    expect(updated.headersJson).toBe(JSON.stringify({ Authorization: 'Bearer new' }));
+    expect(updated.input).toBeUndefined();
+  });
 });

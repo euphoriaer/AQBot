@@ -1,7 +1,10 @@
 use crate::error::{AQBotError, Result};
+use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::{
     model::{CallToolRequestParams, CallToolResult, Tool},
-    transport::streamable_http_client::StreamableHttpClientWorker,
+    transport::streamable_http_client::{
+        StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
+    },
     transport::{ConfigureCommandExt, TokioChildProcess},
     ServiceExt,
 };
@@ -25,6 +28,63 @@ pub struct DiscoveredTool {
     pub name: String,
     pub description: Option<String>,
     pub input_schema: Option<Value>,
+}
+
+fn parse_mcp_headers_json(headers_json: Option<&str>) -> Result<HashMap<HeaderName, HeaderValue>> {
+    let Some(raw) = headers_json.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return Ok(HashMap::new());
+    };
+
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|e| AQBotError::Gateway(format!("Invalid MCP custom headers JSON: {}", e)))?;
+    let object = value.as_object().ok_or_else(|| {
+        AQBotError::Gateway("Invalid MCP custom headers JSON: expected object".to_string())
+    })?;
+
+    let mut headers = HashMap::with_capacity(object.len());
+    for (key, value) in object {
+        let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|e| {
+            AQBotError::Gateway(format!("Invalid MCP custom header name '{}': {}", key, e))
+        })?;
+        let header_value = value.as_str().ok_or_else(|| {
+            AQBotError::Gateway(format!(
+                "Invalid MCP custom header value for '{}': expected string",
+                key
+            ))
+        })?;
+        let header_value = HeaderValue::from_str(header_value).map_err(|e| {
+            AQBotError::Gateway(format!(
+                "Invalid MCP custom header value for '{}': {}",
+                key, e
+            ))
+        })?;
+        headers.insert(header_name, header_value);
+    }
+
+    Ok(headers)
+}
+
+fn streamable_http_transport(
+    endpoint: &str,
+    headers_json: Option<&str>,
+) -> Result<StreamableHttpClientWorker<reqwest::Client>> {
+    let custom_headers = parse_mcp_headers_json(headers_json)?;
+    let config =
+        StreamableHttpClientTransportConfig::with_uri(endpoint).custom_headers(custom_headers);
+    Ok(StreamableHttpClientWorker::new(
+        reqwest::Client::default(),
+        config,
+    ))
+}
+
+fn apply_mcp_request_headers(
+    mut builder: reqwest::RequestBuilder,
+    headers: &HashMap<HeaderName, HeaderValue>,
+) -> reqwest::RequestBuilder {
+    for (name, value) in headers {
+        builder = builder.header(name.clone(), value.clone());
+    }
+    builder
 }
 
 /// Resolve the user's login shell PATH so that GUI-launched apps can find
@@ -191,10 +251,7 @@ fn env_contains_key_ignore_ascii_case(env: &HashMap<String, String>, key: &str) 
 }
 
 #[cfg(windows)]
-fn env_get_ignore_ascii_case<'a>(
-    env: &'a HashMap<String, String>,
-    key: &str,
-) -> Option<&'a str> {
+fn env_get_ignore_ascii_case<'a>(env: &'a HashMap<String, String>, key: &str) -> Option<&'a str> {
     env.iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(key))
         .map(|(_, v)| v.as_str())
@@ -452,10 +509,11 @@ pub async fn discover_tools_stdio(
 /// Execute a tool call against an MCP server via HTTP/SSE transport.
 pub async fn call_tool_http(
     endpoint: &str,
+    headers_json: Option<&str>,
     tool_name: &str,
     tool_arguments: Value,
 ) -> Result<McpToolResult> {
-    let transport = StreamableHttpClientWorker::<reqwest::Client>::new_simple(endpoint);
+    let transport = streamable_http_transport(endpoint, headers_json)?;
 
     let client = ()
         .serve(transport)
@@ -478,6 +536,7 @@ pub async fn call_tool_http(
 /// SSE transport uses the legacy MCP SSE protocol (GET /sse → endpoint → POST).
 pub async fn call_tool_sse(
     endpoint: &str,
+    headers_json: Option<&str>,
     tool_name: &str,
     tool_arguments: Value,
 ) -> Result<McpToolResult> {
@@ -490,7 +549,7 @@ pub async fn call_tool_sse(
             "arguments": tool_arguments,
         }
     });
-    let response = sse_send_request(endpoint, request).await?;
+    let response = sse_send_request(endpoint, headers_json, request).await?;
     let result_obj = response.get("result").ok_or_else(|| {
         let err = response
             .get("error")
@@ -525,8 +584,11 @@ pub async fn call_tool_sse(
 }
 
 /// Discover tools from an MCP server via HTTP transport.
-pub async fn discover_tools_http(endpoint: &str) -> Result<Vec<DiscoveredTool>> {
-    let transport = StreamableHttpClientWorker::<reqwest::Client>::new_simple(endpoint);
+pub async fn discover_tools_http(
+    endpoint: &str,
+    headers_json: Option<&str>,
+) -> Result<Vec<DiscoveredTool>> {
+    let transport = streamable_http_transport(endpoint, headers_json)?;
 
     let client = ()
         .serve(transport)
@@ -544,14 +606,17 @@ pub async fn discover_tools_http(endpoint: &str) -> Result<Vec<DiscoveredTool>> 
 }
 
 /// Discover tools from an MCP server via legacy SSE protocol.
-pub async fn discover_tools_sse(endpoint: &str) -> Result<Vec<DiscoveredTool>> {
+pub async fn discover_tools_sse(
+    endpoint: &str,
+    headers_json: Option<&str>,
+) -> Result<Vec<DiscoveredTool>> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/list",
         "params": {}
     });
-    let response = sse_send_request(endpoint, request).await?;
+    let response = sse_send_request(endpoint, headers_json, request).await?;
     tracing::info!(
         "SSE tools/list response: {}",
         serde_json::to_string_pretty(&response).unwrap_or_default()
@@ -588,9 +653,14 @@ pub async fn discover_tools_sse(endpoint: &str) -> Result<Vec<DiscoveredTool>> {
 // ---------------------------------------------------------------------------
 
 /// Perform a full legacy MCP SSE session: connect → initialize → send request → return response.
-async fn sse_send_request(sse_url: &str, request: Value) -> Result<Value> {
+async fn sse_send_request(
+    sse_url: &str,
+    headers_json: Option<&str>,
+    request: Value,
+) -> Result<Value> {
     use futures::StreamExt;
 
+    let custom_headers = parse_mcp_headers_json(headers_json)?;
     let client = reqwest::Client::builder()
         .http1_only()
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -599,12 +669,13 @@ async fn sse_send_request(sse_url: &str, request: Value) -> Result<Value> {
 
     // 1. GET the SSE endpoint to open a persistent stream
     tracing::info!("SSE: connecting to {}", sse_url);
-    let sse_resp = client
-        .get(sse_url)
-        .header("Accept", "text/event-stream")
-        .send()
-        .await
-        .map_err(|e| AQBotError::Gateway(format!("SSE connect failed: {}", e)))?;
+    let sse_resp = apply_mcp_request_headers(
+        client.get(sse_url).header("Accept", "text/event-stream"),
+        &custom_headers,
+    )
+    .send()
+    .await
+    .map_err(|e| AQBotError::Gateway(format!("SSE connect failed: {}", e)))?;
 
     if !sse_resp.status().is_success() {
         return Err(AQBotError::Gateway(format!(
@@ -652,8 +723,7 @@ async fn sse_send_request(sse_url: &str, request: Value) -> Result<Value> {
             "clientInfo": { "name": "AQBot", "version": "1.0.0" }
         }
     });
-    let init_resp = client
-        .post(&messages_url)
+    let init_resp = apply_mcp_request_headers(client.post(&messages_url), &custom_headers)
         .json(&init_request)
         .send()
         .await
@@ -674,8 +744,7 @@ async fn sse_send_request(sse_url: &str, request: Value) -> Result<Value> {
     tracing::info!("SSE: initialize handshake complete");
 
     // 4. POST initialized notification (no id — it's a notification)
-    let _ = client
-        .post(&messages_url)
+    let _ = apply_mcp_request_headers(client.post(&messages_url), &custom_headers)
         .json(&serde_json::json!({
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
@@ -685,8 +754,7 @@ async fn sse_send_request(sse_url: &str, request: Value) -> Result<Value> {
         .await;
 
     // 5. POST the actual request
-    let resp = client
-        .post(&messages_url)
+    let resp = apply_mcp_request_headers(client.post(&messages_url), &custom_headers)
         .json(&request)
         .send()
         .await
@@ -852,6 +920,52 @@ mod tests {
     }
 
     #[test]
+    fn parse_mcp_headers_json_accepts_authorization_and_custom_headers() {
+        let headers = parse_mcp_headers_json(Some(
+            r#"{"Authorization":"Bearer token","X-Custom":"value"}"#,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            headers
+                .get(&reqwest::header::HeaderName::from_static("authorization"))
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Bearer token"
+        );
+        assert_eq!(
+            headers
+                .get(&reqwest::header::HeaderName::from_static("x-custom"))
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "value"
+        );
+    }
+
+    #[test]
+    fn parse_mcp_headers_json_rejects_invalid_json() {
+        let err = parse_mcp_headers_json(Some("{bad-json")).unwrap_err();
+
+        assert!(err.to_string().contains("Invalid MCP custom headers JSON"));
+    }
+
+    #[test]
+    fn parse_mcp_headers_json_rejects_invalid_header_name() {
+        let err = parse_mcp_headers_json(Some(r#"{"bad header":"value"}"#)).unwrap_err();
+
+        assert!(err.to_string().contains("Invalid MCP custom header name"));
+    }
+
+    #[test]
+    fn parse_mcp_headers_json_rejects_invalid_header_value() {
+        let err = parse_mcp_headers_json(Some(r#"{"X-Test":"bad\u0000value"}"#)).unwrap_err();
+
+        assert!(err.to_string().contains("Invalid MCP custom header value"));
+    }
+
+    #[test]
     fn stdio_env_treats_path_key_case_insensitively() {
         let mut env = HashMap::new();
         env.insert("Path".to_string(), "/custom/bin".to_string());
@@ -925,13 +1039,7 @@ mod tests {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            call_tool_stdio(
-                "python3",
-                &args,
-                &env,
-                "fetch_url",
-                serde_json::json!({}),
-            ),
+            call_tool_stdio("python3", &args, &env, "fetch_url", serde_json::json!({})),
         )
         .await;
 

@@ -30,6 +30,34 @@ const BUILTIN_DISPLAY_NAME_KEYS: Record<string, string> = {
   '@aqbot/search-file': 'settings.mcpServers.builtinSearchFile',
 };
 
+function normalizeImportTransport(cfg: Record<string, unknown>): 'stdio' | 'http' | 'sse' | null {
+  const rawType = typeof cfg.type === 'string'
+    ? cfg.type
+    : typeof cfg.transport === 'string'
+      ? cfg.transport
+      : '';
+  const normalized = rawType.toLowerCase().replace(/[\s_-]/g, '');
+
+  if (normalized === 'streamablehttp' || normalized === 'http') return 'http';
+  if (normalized === 'sse') return 'sse';
+  if (normalized === 'stdio') return 'stdio';
+  if (typeof cfg.command === 'string') return 'stdio';
+  if (typeof cfg.url === 'string' || typeof cfg.endpoint === 'string') return 'http';
+  return null;
+}
+
+function importStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const result: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === 'string' && key.trim()) {
+      result[key] = raw;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 // ── Left Sidebar: Server List ─────────────────────────────
 
 function McpServerList({
@@ -209,7 +237,11 @@ function McpServerDetail({
   const displayName = isBuiltin ? t(BUILTIN_DISPLAY_NAME_KEYS[server.name] ?? server.name, server.name) : server.name;
 
   const handleFieldChange = async (field: string, value: unknown) => {
-    await updateServer(server.id, { [field]: value });
+    try {
+      await updateServer(server.id, { [field]: value });
+    } catch (e) {
+      message.error(`${t('settings.mcpServers.saveFailed', 'Save failed')}: ${e}`);
+    }
   };
 
   const handleDiscoverTools = async () => {
@@ -358,7 +390,10 @@ function McpServerDetail({
                   const idx = line.indexOf('=');
                   if (idx > 0) obj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
                 }
-                handleFieldChange('headersJson', lines.length > 0 ? JSON.stringify(obj) : null);
+                handleFieldChange(
+                  'headersJson',
+                  Object.keys(obj).length > 0 ? JSON.stringify(obj) : null,
+                );
               }}
               placeholder={'Authorization=Bearer xxx\nX-Custom=value'}
               autoSize={{ minRows: 2, maxRows: 6 }}
@@ -535,17 +570,20 @@ export default function McpServerSettings() {
     const results: CreateMcpServerInput[] = [];
     for (const [name, cfg] of Object.entries(serversObj)) {
       const c = cfg as Record<string, unknown>;
-      let transport: 'stdio' | 'http' | 'sse';
-      if (c.type === 'streamable_http') transport = 'http';
-      else if (c.type === 'sse') transport = 'sse';
-      else if (c.command) transport = 'stdio';
-      else continue;
+      const transport = normalizeImportTransport(c);
+      if (!transport) continue;
+      const headers = importStringRecord(c.headers);
       results.push({
         name,
         transport,
         command: typeof c.command === 'string' ? c.command : undefined,
         args: Array.isArray(c.args) ? c.args.filter((a): a is string => typeof a === 'string') : undefined,
-        endpoint: typeof c.url === 'string' ? c.url : undefined,
+        endpoint: typeof c.url === 'string'
+          ? c.url
+          : typeof c.endpoint === 'string'
+            ? c.endpoint
+            : undefined,
+        headersJson: headers ? JSON.stringify(headers) : undefined,
         enabled: false,
       });
     }

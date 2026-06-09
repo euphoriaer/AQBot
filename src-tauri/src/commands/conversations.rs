@@ -1855,6 +1855,7 @@ async fn execute_tool_call(
             execute_tool_future(
                 aqbot_core::mcp_client::call_tool_http(
                     &endpoint,
+                    server.headers_json.as_deref(),
                     &tool_call.function.name,
                     arguments,
                 ),
@@ -1872,6 +1873,7 @@ async fn execute_tool_call(
             execute_tool_future(
                 aqbot_core::mcp_client::call_tool_sse(
                     &endpoint,
+                    server.headers_json.as_deref(),
                     &tool_call.function.name,
                     arguments,
                 ),

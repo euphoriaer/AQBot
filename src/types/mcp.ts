@@ -8,18 +8,18 @@ export type McpServer = {
   id: string;
   name: string;
   transport: McpTransport;
-  command?: string;
-  argsJson?: string;
-  endpoint?: string;
-  envJson?: string;
+  command?: string | null;
+  argsJson?: string | null;
+  endpoint?: string | null;
+  envJson?: string | null;
   enabled: boolean;
   permissionPolicy: McpPermissionPolicy;
   source: McpServerSource;
-  discoverTimeoutSecs?: number;
-  executeTimeoutSecs?: number;
-  headersJson?: string;
-  iconType?: string;
-  iconValue?: string;
+  discoverTimeoutSecs?: number | null;
+  executeTimeoutSecs?: number | null;
+  headersJson?: string | null;
+  iconType?: string | null;
+  iconValue?: string | null;
 };
 
 export type ToolDescriptor = {
@@ -61,4 +61,18 @@ export type CreateMcpServerInput = {
   iconValue?: string;
 };
 
-export type UpdateMcpServerInput = Partial<CreateMcpServerInput>;
+export type UpdateMcpServerInput = {
+  name?: string;
+  transport?: McpTransport;
+  command?: string | null;
+  args?: string[] | null;
+  endpoint?: string | null;
+  env?: Record<string, string> | null;
+  enabled?: boolean;
+  permissionPolicy?: McpPermissionPolicy;
+  discoverTimeoutSecs?: number | null;
+  executeTimeoutSecs?: number | null;
+  headersJson?: string | null;
+  iconType?: string | null;
+  iconValue?: string | null;
+};
