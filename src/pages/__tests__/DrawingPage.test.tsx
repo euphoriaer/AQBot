@@ -87,6 +87,43 @@ function generationFixture(id: string, createdAt: number, images: DrawingImage[]
   };
 }
 
+function createAnimationFrameQueue() {
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrameId = 1;
+  const requestAnimationFrameSpy = vi
+    .spyOn(window, 'requestAnimationFrame')
+    .mockImplementation((callback) => {
+      const frameId = nextFrameId;
+      nextFrameId += 1;
+      frames.set(frameId, callback);
+      return frameId;
+    });
+  const cancelAnimationFrameSpy = vi
+    .spyOn(window, 'cancelAnimationFrame')
+    .mockImplementation((frameId) => {
+      frames.delete(frameId);
+    });
+
+  const flushNext = () => {
+    const nextFrame = frames.entries().next().value;
+    if (!nextFrame) return;
+    const [frameId, callback] = nextFrame;
+    frames.delete(frameId);
+    callback(0);
+  };
+
+  return {
+    flushNext,
+    flushAll: () => {
+      while (frames.size > 0) flushNext();
+    },
+    restore: () => {
+      requestAnimationFrameSpy.mockRestore();
+      cancelAnimationFrameSpy.mockRestore();
+    },
+  };
+}
+
 describe('DrawingPage routing', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -130,7 +167,12 @@ describe('DrawingPage routing', () => {
     expect(composer.style.border).toBe('1px solid var(--border-color)');
     expect(composer.style.borderRadius).toBe('16px');
     expect(composer.querySelector('textarea')).toHaveClass('aqbot-input-textarea');
-    expect(screen.getByTestId('drawing-history-scroll')).toHaveStyle({ paddingBottom: '192px' });
+    const historyFrame = screen.getByTestId('drawing-history-frame');
+    const historyScroller = screen.getByTestId('drawing-history-scroll');
+    expect(historyFrame).toHaveClass('absolute');
+    expect(historyFrame).toHaveStyle({ bottom: '176px' });
+    expect(historyScroller).toHaveClass('h-full');
+    expect(historyScroller.style.paddingBottom).toBe('');
   });
 
   it('scrolls the history area to the bottom when a new generation appears', () => {
@@ -159,6 +201,20 @@ describe('DrawingPage routing', () => {
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 900, behavior: 'smooth' });
     requestAnimationFrameSpy.mockRestore();
+  });
+
+  it('does not stretch the history content wrapper when records are visible', () => {
+    render(<ContentArea activePage="drawing" />);
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('正在生成的历史图', 1, []),
+        ],
+      });
+    });
+
+    expect(screen.getByTestId('drawing-generation-list').parentElement).not.toHaveClass('min-h-full');
   });
 
   it('scrolls the history area to the bottom when the latest generation receives images', () => {
@@ -251,6 +307,268 @@ describe('DrawingPage routing', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 1300, behavior: 'smooth' });
     requestAnimationFrameSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  it('scrolls to the bottom when a generation is deleted while already at the bottom', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    const scrollTo = vi.fn();
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1500 });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('deleted-later', 2),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+    scrollTo.mockClear();
+    scroller.scrollTop = 900;
+    fireEvent.scroll(scroller);
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' });
+    requestAnimationFrameSpy.mockRestore();
+  });
+
+  it('does not scroll to the bottom when a generation is deleted while reading the middle', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    const scrollTo = vi.fn();
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1500 });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('deleted-later', 2),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+    scrollTo.mockClear();
+    scroller.scrollTop = 300;
+    fireEvent.scroll(scroller);
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+
+    expect(scrollTo).not.toHaveBeenCalled();
+    requestAnimationFrameSpy.mockRestore();
+  });
+
+  it('scrolls to the bottom when the latest generation is deleted', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    const scrollTo = vi.fn();
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1800 });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('middle', 2),
+          generationFixture('latest-deleted', 3),
+        ],
+      });
+    });
+    scrollTo.mockClear();
+    scroller.scrollTop = 500;
+    fireEvent.scroll(scroller);
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1200 });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('middle', 2),
+        ],
+      });
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'smooth' });
+    requestAnimationFrameSpy.mockRestore();
+  });
+
+  it('keeps scrolling to the bottom after latest deletion layout settles', () => {
+    const animationFrames = createAnimationFrameQueue();
+    const scrollTo = vi.fn();
+    let scrollHeight = 1800;
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('middle', 2),
+          generationFixture('latest-deleted', 3),
+        ],
+      });
+    });
+    animationFrames.flushAll();
+    scrollTo.mockClear();
+    scroller.scrollTop = 500;
+    fireEvent.scroll(scroller);
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('middle', 2),
+        ],
+      });
+    });
+    animationFrames.flushNext();
+    scrollHeight = 1200;
+    animationFrames.flushAll();
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'smooth' });
+    animationFrames.restore();
+  });
+
+  it('scrolls to the bottom when deletion leaves too little content below the viewport', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    const scrollTo = vi.fn();
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1500 });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('deleted-later', 2),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+    scrollTo.mockClear();
+    scroller.scrollTop = 420;
+    fireEvent.scroll(scroller);
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' });
+    requestAnimationFrameSpy.mockRestore();
+  });
+
+  it('scrolls to the bottom when deletion later leaves too little content below the viewport', () => {
+    const animationFrames = createAnimationFrameQueue();
+    const scrollTo = vi.fn();
+    let scrollHeight = 1500;
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('deleted-later', 2),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+    animationFrames.flushAll();
+    scrollTo.mockClear();
+    scroller.scrollTop = 420;
+    fireEvent.scroll(scroller);
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('latest', 3),
+        ],
+      });
+    });
+    animationFrames.flushNext();
+    scrollHeight = 1000;
+    animationFrames.flushAll();
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' });
+    animationFrames.restore();
   });
 
   it('fills the composer from a clicked history prompt', () => {

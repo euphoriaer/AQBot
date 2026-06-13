@@ -274,7 +274,7 @@ describe('DrawingGenerationItem', () => {
 
   it('shows failed generation errors with a copy action', () => {
     const onDelete = vi.fn();
-    render(
+    const { container } = render(
       <DrawingGenerationItem
         generation={generationFixture({
           status: 'failed',
@@ -290,6 +290,7 @@ describe('DrawingGenerationItem', () => {
 
     expect(screen.getByText('OpenAI image API error 400')).toBeDefined();
     expect(screen.getAllByText('copy-button').length).toBeGreaterThanOrEqual(1);
+    expect(container.querySelector('.drawing-image-placeholder')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '删除' }));
     expect(screen.queryByText('仅删除记录')).toBeNull();
   });
