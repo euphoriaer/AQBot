@@ -1,7 +1,7 @@
 import { App, Button, Image, Tag, theme } from 'antd';
 import { ArrowUp, GripHorizontal, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { ClipboardEvent as ReactClipboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@/lib/invoke';
 import { useDrawingStore } from '@/stores/drawingStore';
@@ -16,9 +16,38 @@ interface Props {
 
 const TEXTAREA_MIN_HEIGHT = 72;
 const TEXTAREA_MAX_HEIGHT = 260;
+const PASTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
 
 function clampTextareaHeight(value: number) {
   return Math.min(TEXTAREA_MAX_HEIGHT, Math.max(TEXTAREA_MIN_HEIGHT, value));
+}
+
+function getExtensionForImageType(type: string) {
+  if (type === 'image/jpeg' || type === 'image/jpg') return 'jpg';
+  if (type === 'image/webp') return 'webp';
+  return 'png';
+}
+
+function ensurePastedImageName(file: File, index: number) {
+  if (file.name) return file;
+  const type = file.type || 'image/png';
+  return new File(
+    [file],
+    `pasted-image-${Date.now()}-${index + 1}.${getExtensionForImageType(type)}`,
+    { type, lastModified: file.lastModified },
+  );
+}
+
+function getPastedImageFiles(items: DataTransferItemList | undefined) {
+  if (!items) return [];
+
+  const files: File[] = [];
+  for (const item of items) {
+    if (item.kind !== 'file' || !PASTED_IMAGE_TYPES.has(item.type)) continue;
+    const file = item.getAsFile();
+    if (file) files.push(ensurePastedImageName(file, files.length));
+  }
+  return files;
 }
 
 function DrawingEditPreview({ image, previewUrl }: { image: DrawingImage; previewUrl: string | null }) {
@@ -78,6 +107,7 @@ export function DrawingComposer({ settings, prompt, onPromptChange, onHeightChan
   const editMaskFile = useDrawingStore((s) => s.editMaskFile);
   const editPreviewUrl = useDrawingStore((s) => s.editPreviewUrl);
   const selectImageForEdit = useDrawingStore((s) => s.selectImageForEdit);
+  const uploadReferenceImage = useDrawingStore((s) => s.uploadReferenceImage);
   const generateImages = useDrawingStore((s) => s.generateImages);
   const editImage = useDrawingStore((s) => s.editImage);
   const editImageWithMask = useDrawingStore((s) => s.editImageWithMask);
@@ -179,6 +209,21 @@ export function DrawingComposer({ settings, prompt, onPromptChange, onHeightChan
     }
   };
 
+  const handlePaste = useCallback((event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const imageFiles = getPastedImageFiles(event.clipboardData?.items);
+    if (imageFiles.length === 0) return;
+
+    event.preventDefault();
+    void (async () => {
+      try {
+        await Promise.all(imageFiles.map((file) => uploadReferenceImage(file)));
+        message.success?.(t('drawing.referenceAdded', '已加入参考图'));
+      } catch (error) {
+        message.error?.(String(error));
+      }
+    })();
+  }, [message, t, uploadReferenceImage]);
+
   return (
     <div
       ref={rootRef}
@@ -230,6 +275,7 @@ export function DrawingComposer({ settings, prompt, onPromptChange, onHeightChan
           className="aqbot-input-textarea"
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
+          onPaste={handlePaste}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.key === 'Process') return;
             if (event.key === 'Enter' && !event.shiftKey) {

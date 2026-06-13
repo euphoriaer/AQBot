@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContentArea } from '@/components/layout/ContentArea';
 import { useDrawingSettingsStore } from '@/stores/drawingSettingsStore';
 import { useDrawingStore } from '@/stores/drawingStore';
@@ -88,6 +88,11 @@ function generationFixture(id: string, createdAt: number, images: DrawingImage[]
 }
 
 describe('DrawingPage routing', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     useDrawingStore.setState({
       generations: [],
@@ -156,6 +161,98 @@ describe('DrawingPage routing', () => {
     requestAnimationFrameSpy.mockRestore();
   });
 
+  it('scrolls the history area to the bottom when the latest generation receives images', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    const scrollTo = vi.fn();
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 900 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          {
+            ...generationFixture('newer', 2),
+            status: 'running',
+            completed_at: null,
+            images: [],
+          },
+        ],
+      });
+    });
+    scrollTo.mockClear();
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1200 });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          generationFixture('older', 1),
+          generationFixture('newer', 2, [imageFixture()]),
+        ],
+      });
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'smooth' });
+    requestAnimationFrameSpy.mockRestore();
+  });
+
+  it('keeps scrolling to the bottom when the history content height changes', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    vi.stubGlobal('ResizeObserver', vi.fn(function ResizeObserverMock(callback: ResizeObserverCallback) {
+      resizeCallbacks.push(callback);
+      return {
+        observe: vi.fn(),
+        unobserve: vi.fn(),
+        disconnect: vi.fn(),
+      };
+    }));
+    const scrollTo = vi.fn();
+
+    render(<ContentArea activePage="drawing" />);
+
+    const scroller = screen.getByTestId('drawing-history-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 900 });
+    Object.defineProperty(scroller, 'scrollTo', { configurable: true, value: scrollTo });
+
+    act(() => {
+      useDrawingStore.setState({
+        generations: [
+          {
+            ...generationFixture('newer', 1),
+            status: 'running',
+            completed_at: null,
+            images: [],
+          },
+        ],
+      });
+    });
+    scrollTo.mockClear();
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1300 });
+
+    act(() => {
+      resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver));
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1300, behavior: 'smooth' });
+    requestAnimationFrameSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it('fills the composer from a clicked history prompt', () => {
     render(<ContentArea activePage="drawing" />);
 
@@ -170,6 +267,61 @@ describe('DrawingPage routing', () => {
     fireEvent.click(screen.getByRole('button', { name: '使用提示词' }));
 
     expect(screen.getByPlaceholderText('输入你想生成的画面')).toHaveValue('历史提示词');
+  });
+
+  it('uploads pasted images as drawing references and prevents the default paste', async () => {
+    const uploadReferenceImage = vi.fn(async () => ({
+      id: 'ref-1',
+      original_name: 'pasted.png',
+      mime_type: 'image/png',
+      size_bytes: 3,
+      storage_path: 'images/pasted.png',
+    }));
+    useDrawingStore.setState({ uploadReferenceImage });
+    render(<ContentArea activePage="drawing" />);
+
+    const textarea = screen.getByPlaceholderText('输入你想生成的画面');
+    const file = new File(['png'], 'pasted.png', { type: 'image/png' });
+    const pasteEvent = createEvent.paste(textarea, {
+      clipboardData: {
+        items: [{
+          kind: 'file',
+          type: 'image/png',
+          getAsFile: () => file,
+        }],
+      },
+    });
+    const preventDefault = vi.spyOn(pasteEvent, 'preventDefault');
+
+    fireEvent(textarea, pasteEvent);
+
+    await waitFor(() => {
+      expect(uploadReferenceImage).toHaveBeenCalledWith(file);
+    });
+    expect(preventDefault).toHaveBeenCalled();
+  });
+
+  it('does not intercept text-only paste in the drawing composer', () => {
+    const uploadReferenceImage = vi.fn();
+    useDrawingStore.setState({ uploadReferenceImage });
+    render(<ContentArea activePage="drawing" />);
+
+    const textarea = screen.getByPlaceholderText('输入你想生成的画面');
+    const pasteEvent = createEvent.paste(textarea, {
+      clipboardData: {
+        items: [{
+          kind: 'string',
+          type: 'text/plain',
+          getAsFile: () => null,
+        }],
+      },
+    });
+    const preventDefault = vi.spyOn(pasteEvent, 'preventDefault');
+
+    fireEvent(textarea, pasteEvent);
+
+    expect(uploadReferenceImage).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it('keeps drawing settings when switching away from the drawing page and back', () => {

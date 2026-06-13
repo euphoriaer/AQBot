@@ -20,12 +20,24 @@ export function DrawingPage() {
   const generations = useDrawingStore((s) => s.generations);
   const selectImageForEdit = useDrawingStore((s) => s.selectImageForEdit);
   const historyScrollRef = useRef<HTMLDivElement>(null);
+  const historyContentRef = useRef<HTMLDivElement>(null);
+  const historyScrollFrameRef = useRef<number | null>(null);
+  const followHistoryBottomRef = useRef(false);
   const [prompt, setPrompt] = useState('');
   const [maskImage, setMaskImage] = useState<DrawingImage | null>(null);
   const [composerHeight, setComposerHeight] = useState(176);
   const settings = useDrawingSettingsStore((s) => s.settings);
   const setSettings = useDrawingSettingsStore((s) => s.setSettings);
-  const latestGenerationId = generations[generations.length - 1]?.id;
+  const latestGeneration = generations[generations.length - 1];
+  const latestGenerationScrollKey = latestGeneration
+    ? [
+      latestGeneration.id,
+      latestGeneration.status,
+      latestGeneration.images.length,
+      latestGeneration.completed_at ?? '',
+      latestGeneration.error_message ?? '',
+    ].join(':')
+    : '';
 
   const drawingModelOptions = useMemo(() => getDrawingModelOptions(), []);
 
@@ -37,16 +49,56 @@ export function DrawingPage() {
     loadHistory().catch((e) => message.error(String(e)));
   }, [loadHistory, message]);
 
-  useEffect(() => {
-    if (!latestGenerationId) return undefined;
-    const frameId = requestAnimationFrame(() => {
+  const scheduleScrollToBottom = useCallback(() => {
+    followHistoryBottomRef.current = true;
+    if (historyScrollFrameRef.current !== null) {
+      cancelAnimationFrame(historyScrollFrameRef.current);
+    }
+    historyScrollFrameRef.current = requestAnimationFrame(() => {
+      historyScrollFrameRef.current = null;
       const scroller = historyScrollRef.current;
       if (!scroller) return;
       scroller.scrollTop = scroller.scrollHeight;
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+      scroller.scrollTo?.({ top: scroller.scrollHeight, behavior: 'smooth' });
     });
-    return () => cancelAnimationFrame(frameId);
-  }, [latestGenerationId]);
+  }, []);
+
+  const handleHistoryScroll = useCallback(() => {
+    const scroller = historyScrollRef.current;
+    if (!scroller) return;
+    const distanceToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    followHistoryBottomRef.current = distanceToBottom <= 48;
+  }, []);
+
+  useEffect(() => () => {
+    if (historyScrollFrameRef.current !== null) {
+      cancelAnimationFrame(historyScrollFrameRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!latestGenerationScrollKey) return;
+    scheduleScrollToBottom();
+  }, [latestGenerationScrollKey, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    const content = historyContentRef.current;
+    if (!content || typeof ResizeObserver === 'undefined') return undefined;
+
+    const observer = new ResizeObserver(() => {
+      if (followHistoryBottomRef.current) {
+        scheduleScrollToBottom();
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [scheduleScrollToBottom]);
+
+  useEffect(() => {
+    if (followHistoryBottomRef.current) {
+      scheduleScrollToBottom();
+    }
+  }, [composerHeight, scheduleScrollToBottom]);
 
   useEffect(() => {
     setSettings((current) => {
@@ -99,19 +151,22 @@ export function DrawingPage() {
           ref={historyScrollRef}
           className="h-full overflow-y-auto"
           data-testid="drawing-history-scroll"
+          onScroll={handleHistoryScroll}
           style={{ paddingBottom: composerHeight + 16 }}
         >
-          {error && (
-            <div style={{ padding: '12px 24px 0' }}>
-              <Alert type="error" showIcon message={error} />
-            </div>
-          )}
-          <DrawingGenerationList
-            onEdit={(image) => selectImageForEdit(image)}
-            onMaskEdit={handleMaskEdit}
-            onUsePrompt={handleUsePrompt}
-            referenceImageMode={settings.referenceImageMode}
-          />
+          <div ref={historyContentRef} className="min-h-full">
+            {error && (
+              <div style={{ padding: '12px 24px 0' }}>
+                <Alert type="error" showIcon message={error} />
+              </div>
+            )}
+            <DrawingGenerationList
+              onEdit={(image) => selectImageForEdit(image)}
+              onMaskEdit={handleMaskEdit}
+              onUsePrompt={handleUsePrompt}
+              referenceImageMode={settings.referenceImageMode}
+            />
+          </div>
         </div>
         <DrawingComposer
           settings={settings}
