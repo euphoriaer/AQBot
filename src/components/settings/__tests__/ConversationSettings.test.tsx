@@ -18,6 +18,19 @@ vi.mock('react-i18next', () => ({
         'settings.chatFontFamily': '对话字体',
         'settings.chatFontSize': '对话字号',
         'settings.chatFontWeight': '对话字重',
+        'settings.chatMessageAreaStyle': '消息区域背景边框',
+        'settings.chatMessageAreaStyleDesc': '分别控制用户消息和 AI 消息的背景色或边框。',
+        'settings.messageAreaStyleNone': '关闭',
+        'settings.messageAreaStyleBackground': '背景色',
+        'settings.messageAreaStyleBorder': '边框',
+        'settings.chatUserMessageAreaStyle': '用户消息样式',
+        'settings.chatUserMessageAreaLightColor': '用户消息日光颜色',
+        'settings.chatUserMessageAreaDarkColor': '用户消息暗黑颜色',
+        'settings.chatUserMessageAreaBorderWidth': '用户消息边框粗细',
+        'settings.chatAiMessageAreaStyle': 'AI 消息样式',
+        'settings.chatAiMessageAreaLightColor': 'AI 消息日光颜色',
+        'settings.chatAiMessageAreaDarkColor': 'AI 消息暗黑颜色',
+        'settings.chatAiMessageAreaBorderWidth': 'AI 消息边框粗细',
         'settings.chatLineHeight': '对话行高',
         'settings.chatMinimap': '对话导航',
         'settings.newConversationDefaults': '新建对话',
@@ -110,17 +123,38 @@ vi.mock('antd', () => {
         onClick={() => onChange?.(!checked)}
       />
     ),
-    InputNumber: ({
+    ColorPicker: ({
       value,
-      onChange,
+      disabled,
+      onChangeComplete,
       'aria-label': ariaLabel,
     }: {
-      value?: number;
-      onChange?: (value: number | null) => void;
+      value?: string;
+      disabled?: boolean;
+      onChangeComplete?: (color: { toRgbString: () => string }) => void;
       'aria-label'?: string;
     }) => (
       <input
         aria-label={ariaLabel}
+        disabled={disabled}
+        value={value ?? ''}
+        onChange={(event) => onChangeComplete?.({ toRgbString: () => event.target.value })}
+      />
+    ),
+    InputNumber: ({
+      value,
+      onChange,
+      disabled,
+      'aria-label': ariaLabel,
+    }: {
+      value?: number;
+      onChange?: (value: number | null) => void;
+      disabled?: boolean;
+      'aria-label'?: string;
+    }) => (
+      <input
+        aria-label={ariaLabel}
+        disabled={disabled}
         type="number"
         value={value ?? ''}
         onChange={(event) => onChange?.(event.target.value === '' ? null : Number(event.target.value))}
@@ -218,6 +252,14 @@ describe('ConversationSettings', () => {
       chat_line_height: 1.7,
       chat_font_family: '',
       chat_font_weight: 400,
+      chat_user_message_area_style: 'background',
+      chat_user_message_area_light_color: 'rgba(0, 0, 0, 0)',
+      chat_user_message_area_dark_color: 'rgba(0, 0, 0, 0)',
+      chat_user_message_area_border_width: 1,
+      chat_ai_message_area_style: 'background',
+      chat_ai_message_area_light_color: '#f5f5f5',
+      chat_ai_message_area_dark_color: 'rgba(255, 255, 255, 0.06)',
+      chat_ai_message_area_border_width: 1,
       agent_workspace_root: null,
       agent_workspace_name_strategy: 'uuid',
       agent_workspace_datetime_format: 'YYYY-MM-DD-HH-mm-ss',
@@ -251,6 +293,71 @@ describe('ConversationSettings', () => {
     expect(within(messageStyleGroup as HTMLElement).getByText('对话字体')).toBeInTheDocument();
     expect(within(messageStyleGroup as HTMLElement).getByText('对话字重')).toBeInTheDocument();
     expect(within(messageStyleGroup as HTMLElement).getByText('代码字体')).toBeInTheDocument();
+  });
+
+  it('saves separate user and ai message area style settings', () => {
+    const { rerender } = render(<ConversationSettings />);
+
+    const text = document.body.textContent ?? '';
+    expect(text.indexOf('消息区域背景边框')).toBeGreaterThan(text.indexOf('消息样式'));
+    const areaGroup = screen.getByText('消息区域背景边框').parentElement?.parentElement as HTMLElement;
+    expect(within(areaGroup).getByText('分别控制用户消息和 AI 消息的背景色或边框。')).toBeInTheDocument();
+    expect(within(areaGroup).getByText('用户消息样式')).toBeInTheDocument();
+    expect(within(areaGroup).getByText('AI 消息样式')).toBeInTheDocument();
+    expect(screen.getByLabelText('用户消息日光颜色')).toHaveValue('rgba(0, 0, 0, 0)');
+    expect(screen.getByLabelText('用户消息暗黑颜色')).toHaveValue('rgba(0, 0, 0, 0)');
+    expect(screen.getByLabelText('AI 消息日光颜色')).toHaveValue('#f5f5f5');
+    expect(screen.getByLabelText('AI 消息暗黑颜色')).toHaveValue('rgba(255, 255, 255, 0.06)');
+    expect(screen.getByLabelText('用户消息边框粗细')).toBeDisabled();
+    expect(screen.getByLabelText('AI 消息边框粗细')).toBeDisabled();
+
+    const [userStyleSelect, aiStyleSelect] = within(areaGroup).getAllByRole('combobox');
+    expect(userStyleSelect).toHaveValue('background');
+    expect(aiStyleSelect).toHaveValue('background');
+    fireEvent.change(userStyleSelect, { target: { value: 'border' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ chat_user_message_area_style: 'border' });
+    fireEvent.change(aiStyleSelect, { target: { value: 'none' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ chat_ai_message_area_style: 'none' });
+
+    settings = {
+      ...settings,
+      chat_user_message_area_style: 'none',
+      chat_ai_message_area_style: 'none',
+    };
+    rerender(<ConversationSettings />);
+
+    expect(screen.getByLabelText('用户消息日光颜色')).toBeDisabled();
+    expect(screen.getByLabelText('用户消息暗黑颜色')).toBeDisabled();
+    expect(screen.getByLabelText('用户消息边框粗细')).toBeDisabled();
+    expect(screen.getByLabelText('AI 消息日光颜色')).toBeDisabled();
+    expect(screen.getByLabelText('AI 消息暗黑颜色')).toBeDisabled();
+    expect(screen.getByLabelText('AI 消息边框粗细')).toBeDisabled();
+
+    const noneAreaGroup = screen.getByText('消息区域背景边框').parentElement?.parentElement as HTMLElement;
+    const [userNoneStyleSelect] = within(noneAreaGroup).getAllByRole('combobox');
+    fireEvent.change(userNoneStyleSelect, { target: { value: 'background' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ chat_user_message_area_style: 'background' });
+
+    settings = {
+      ...settings,
+      chat_user_message_area_style: 'border',
+      chat_ai_message_area_style: 'border',
+    };
+    rerender(<ConversationSettings />);
+    expect(screen.getByLabelText('用户消息边框粗细')).not.toBeDisabled();
+    expect(screen.getByLabelText('AI 消息边框粗细')).not.toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('用户消息日光颜色'), { target: { value: 'rgba(1, 2, 3, 0.4)' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ chat_user_message_area_light_color: 'rgba(1, 2, 3, 0.4)' });
+
+    fireEvent.change(screen.getByLabelText('用户消息边框粗细'), { target: { value: '8' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ chat_user_message_area_border_width: 4 });
+
+    fireEvent.change(screen.getByLabelText('AI 消息暗黑颜色'), { target: { value: 'rgba(4, 5, 6, 0.5)' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ chat_ai_message_area_dark_color: 'rgba(4, 5, 6, 0.5)' });
+
+    fireEvent.change(screen.getByLabelText('AI 消息边框粗细'), { target: { value: '0' } });
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ chat_ai_message_area_border_width: 1 });
   });
 
   it('saves normalized chat typography settings', () => {

@@ -2138,6 +2138,38 @@ export function ChatView() {
     [settings.code_theme, settings.code_theme_light],
   );
   const bubbleListThemeKey = `bubble-list:${isDarkMode ? 'dark' : 'light'}:${settings.code_theme ?? ''}:${settings.code_theme_light ?? ''}`;
+  const userMessageAreaStyle = settings.chat_user_message_area_style ?? 'background';
+  const aiMessageAreaStyle = settings.chat_ai_message_area_style ?? 'background';
+  const userMessageAreaBorderWidth = Math.min(4, Math.max(1, Math.round(settings.chat_user_message_area_border_width ?? 1)));
+  const aiMessageAreaBorderWidth = Math.min(4, Math.max(1, Math.round(settings.chat_ai_message_area_border_width ?? 1)));
+  const userMessageAreaClass = userMessageAreaStyle === 'background'
+    ? ' bubble-user-background'
+    : userMessageAreaStyle === 'border'
+      ? ' bubble-user-border'
+      : '';
+  const aiMessageAreaClass = aiMessageAreaStyle === 'background'
+    ? ' bubble-ai-background'
+    : aiMessageAreaStyle === 'border'
+      ? ' bubble-ai-border'
+      : '';
+  const messageAreaStyle = useMemo(() => ({
+    '--chat-user-message-area-color': isDarkMode
+      ? settings.chat_user_message_area_dark_color
+      : settings.chat_user_message_area_light_color,
+    '--chat-user-message-area-border-width': `${userMessageAreaBorderWidth}px`,
+    '--chat-ai-message-area-color': isDarkMode
+      ? settings.chat_ai_message_area_dark_color
+      : settings.chat_ai_message_area_light_color,
+    '--chat-ai-message-area-border-width': `${aiMessageAreaBorderWidth}px`,
+  }) as React.CSSProperties, [
+    aiMessageAreaBorderWidth,
+    isDarkMode,
+    settings.chat_ai_message_area_dark_color,
+    settings.chat_ai_message_area_light_color,
+    settings.chat_user_message_area_dark_color,
+    settings.chat_user_message_area_light_color,
+    userMessageAreaBorderWidth,
+  ]);
 
   // Pre-load Shiki themes into the singleton highlighter when theme settings change
   useEffect(() => {
@@ -4122,6 +4154,43 @@ export function ChatView() {
           border: none !important;
           padding: 4px 0;
         }
+        .bubble-user-background .ant-bubble-end .ant-bubble-content {
+          background: var(--chat-user-message-area-color, transparent) !important;
+          border: none !important;
+          border-radius: 8px;
+          box-sizing: border-box;
+          margin-block: 6px;
+          padding: 8px 12px;
+        }
+        .bubble-user-border .ant-bubble-end .ant-bubble-content {
+          border: var(--chat-user-message-area-border-width, 1px) solid var(--chat-user-message-area-color, var(--border-color)) !important;
+          border-radius: 8px;
+          box-sizing: border-box;
+          margin-block: 6px;
+          padding: 8px 12px;
+        }
+        .bubble-ai-background .ant-bubble-start .ant-bubble-content {
+          background: var(--chat-ai-message-area-color, transparent) !important;
+          border: none !important;
+          border-radius: 8px;
+          box-sizing: border-box;
+          margin-block: 6px;
+          padding: 8px 12px;
+        }
+        .bubble-ai-border .ant-bubble-start .ant-bubble-content {
+          border: var(--chat-ai-message-area-border-width, 1px) solid var(--chat-ai-message-area-color, var(--border-color)) !important;
+          border-radius: 8px;
+          box-sizing: border-box;
+          margin-block: 6px;
+          padding: 8px 12px;
+        }
+        .bubble-ai-background .context-clear-bubble .ant-bubble-content,
+        .bubble-ai-border .context-clear-bubble .ant-bubble-content {
+          background: transparent !important;
+          border: none !important;
+          margin-block: 0;
+          padding: 4px 0;
+        }
         .aqbot-streaming-dots {
           display: inline-flex;
           align-items: center;
@@ -4237,7 +4306,12 @@ export function ChatView() {
       </div>
 
       {/* Message Area */}
-      <div ref={messageAreaRef} data-message-area className={`flex-1 min-h-0 overflow-hidden relative bubble-${bubbleStyle || 'modern'}`}>
+      <div
+        ref={messageAreaRef}
+        data-message-area
+        className={`flex-1 min-h-0 overflow-hidden relative bubble-${bubbleStyle || 'modern'}${userMessageAreaClass}${aiMessageAreaClass}`}
+        style={messageAreaStyle}
+      >
         {messages.length === 0 ? (
           activeConversationId && loading ? (
             <div

@@ -1,4 +1,4 @@
-import { Button, Divider, Input, InputNumber, Switch, theme } from 'antd';
+import { Button, ColorPicker, Divider, Input, InputNumber, Switch, theme } from 'antd';
 import { FolderOpen, RotateCcw } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +8,7 @@ import {
   DEFAULT_AGENT_WORKSPACE_NAME_STRATEGY,
   DEFAULT_MCP_TOOL_LOOP_MAX_ITERATIONS,
   type AgentWorkspaceNameStrategy,
+  type ChatMessageAreaStyle,
 } from '@/types';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
 import { SettingsGroup } from './SettingsGroup';
@@ -20,6 +21,12 @@ const CHAT_LINE_HEIGHT_MIN = 1.3;
 const CHAT_LINE_HEIGHT_MAX = 2.0;
 const CHAT_FONT_WEIGHT_MIN = 300;
 const CHAT_FONT_WEIGHT_MAX = 700;
+const CHAT_MESSAGE_AREA_BORDER_WIDTH_MIN = 1;
+const CHAT_MESSAGE_AREA_BORDER_WIDTH_MAX = 4;
+const DEFAULT_USER_MESSAGE_AREA_LIGHT_COLOR = 'rgba(0, 0, 0, 0)';
+const DEFAULT_USER_MESSAGE_AREA_DARK_COLOR = 'rgba(0, 0, 0, 0)';
+const DEFAULT_AI_MESSAGE_AREA_LIGHT_COLOR = '#f5f5f5';
+const DEFAULT_AI_MESSAGE_AREA_DARK_COLOR = 'rgba(255, 255, 255, 0.06)';
 
 function normalizeTimeoutSeconds(value: number | string | null) {
   const numericValue = typeof value === 'number' ? value : Number(value ?? 0);
@@ -52,6 +59,12 @@ function normalizeChatFontWeight(value: number | string | null) {
   const numericValue = typeof value === 'number' ? value : Number(value ?? 400);
   if (!Number.isFinite(numericValue)) return 400;
   return Math.min(CHAT_FONT_WEIGHT_MAX, Math.max(CHAT_FONT_WEIGHT_MIN, Math.round(numericValue)));
+}
+
+function normalizeChatMessageAreaBorderWidth(value: number | string | null) {
+  const numericValue = typeof value === 'number' ? value : Number(value ?? 1);
+  if (!Number.isFinite(numericValue)) return 1;
+  return Math.min(CHAT_MESSAGE_AREA_BORDER_WIDTH_MAX, Math.max(CHAT_MESSAGE_AREA_BORDER_WIDTH_MIN, Math.round(numericValue)));
 }
 
 function previewAgentWorkspaceName(strategy: AgentWorkspaceNameStrategy, format: string) {
@@ -116,6 +129,13 @@ export function ConversationSettings() {
   const fontOptions = [
     { label: t('settings.fontDefault'), value: '' },
     ...systemFonts.map((font) => ({ label: font, value: font })),
+  ];
+  const userMessageAreaStyle = settings.chat_user_message_area_style ?? 'background';
+  const aiMessageAreaStyle = settings.chat_ai_message_area_style ?? 'background';
+  const messageAreaStyleOptions = [
+    { label: t('settings.messageAreaStyleNone'), value: 'none' },
+    { label: t('settings.messageAreaStyleBackground'), value: 'background' },
+    { label: t('settings.messageAreaStyleBorder'), value: 'border' },
   ];
 
   return (
@@ -220,6 +240,103 @@ export function ConversationSettings() {
           <Switch
             checked={settings.render_user_markdown ?? false}
             onChange={(checked) => saveSettings({ render_user_markdown: checked })}
+          />
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup title={t('settings.chatMessageAreaStyle')}>
+        <div style={{ fontSize: 12, color: token.colorTextDescription, marginBottom: 12 }}>
+          {t('settings.chatMessageAreaStyleDesc')}
+        </div>
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatUserMessageAreaStyle')}</span>
+          <SettingsSelect
+            value={userMessageAreaStyle}
+            onChange={(val) => saveSettings({ chat_user_message_area_style: val as ChatMessageAreaStyle })}
+            options={messageAreaStyleOptions}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatUserMessageAreaLightColor')}</span>
+          <ColorPicker
+            aria-label={t('settings.chatUserMessageAreaLightColor')}
+            value={settings.chat_user_message_area_light_color ?? DEFAULT_USER_MESSAGE_AREA_LIGHT_COLOR}
+            disabled={userMessageAreaStyle === 'none'}
+            onChangeComplete={(color) => saveSettings({ chat_user_message_area_light_color: color.toRgbString() })}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatUserMessageAreaDarkColor')}</span>
+          <ColorPicker
+            aria-label={t('settings.chatUserMessageAreaDarkColor')}
+            value={settings.chat_user_message_area_dark_color ?? DEFAULT_USER_MESSAGE_AREA_DARK_COLOR}
+            disabled={userMessageAreaStyle === 'none'}
+            onChangeComplete={(color) => saveSettings({ chat_user_message_area_dark_color: color.toRgbString() })}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatUserMessageAreaBorderWidth')}</span>
+          <InputNumber
+            aria-label={t('settings.chatUserMessageAreaBorderWidth')}
+            min={CHAT_MESSAGE_AREA_BORDER_WIDTH_MIN}
+            max={CHAT_MESSAGE_AREA_BORDER_WIDTH_MAX}
+            step={1}
+            value={settings.chat_user_message_area_border_width ?? 1}
+            disabled={userMessageAreaStyle !== 'border'}
+            onChange={(value) => saveSettings({
+              chat_user_message_area_border_width: normalizeChatMessageAreaBorderWidth(value),
+            })}
+            addonAfter="px"
+            style={{ width: 120 }}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatAiMessageAreaStyle')}</span>
+          <SettingsSelect
+            value={aiMessageAreaStyle}
+            onChange={(val) => saveSettings({ chat_ai_message_area_style: val as ChatMessageAreaStyle })}
+            options={messageAreaStyleOptions}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatAiMessageAreaLightColor')}</span>
+          <ColorPicker
+            aria-label={t('settings.chatAiMessageAreaLightColor')}
+            value={settings.chat_ai_message_area_light_color ?? DEFAULT_AI_MESSAGE_AREA_LIGHT_COLOR}
+            disabled={aiMessageAreaStyle === 'none'}
+            onChangeComplete={(color) => saveSettings({ chat_ai_message_area_light_color: color.toRgbString() })}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatAiMessageAreaDarkColor')}</span>
+          <ColorPicker
+            aria-label={t('settings.chatAiMessageAreaDarkColor')}
+            value={settings.chat_ai_message_area_dark_color ?? DEFAULT_AI_MESSAGE_AREA_DARK_COLOR}
+            disabled={aiMessageAreaStyle === 'none'}
+            onChangeComplete={(color) => saveSettings({ chat_ai_message_area_dark_color: color.toRgbString() })}
+          />
+        </div>
+        <Divider style={{ margin: '4px 0' }} />
+        <div className="flex items-center justify-between" style={rowStyle}>
+          <span>{t('settings.chatAiMessageAreaBorderWidth')}</span>
+          <InputNumber
+            aria-label={t('settings.chatAiMessageAreaBorderWidth')}
+            min={CHAT_MESSAGE_AREA_BORDER_WIDTH_MIN}
+            max={CHAT_MESSAGE_AREA_BORDER_WIDTH_MAX}
+            step={1}
+            value={settings.chat_ai_message_area_border_width ?? 1}
+            disabled={aiMessageAreaStyle !== 'border'}
+            onChange={(value) => saveSettings({
+              chat_ai_message_area_border_width: normalizeChatMessageAreaBorderWidth(value),
+            })}
+            addonAfter="px"
+            style={{ width: 120 }}
           />
         </div>
       </SettingsGroup>

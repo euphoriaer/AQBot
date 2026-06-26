@@ -483,6 +483,7 @@ export type AgentWorkspaceNameStrategy =
   | 'conversation_id'
   | 'created_timestamp'
   | 'created_datetime';
+export type ChatMessageAreaStyle = 'none' | 'background' | 'border';
 
 export interface AppSettings {
   language: string;
@@ -501,6 +502,14 @@ export interface AppSettings {
   chat_font_family: string;
   chat_font_weight: number;
   bubble_style: string;
+  chat_user_message_area_style: ChatMessageAreaStyle;
+  chat_user_message_area_light_color: string;
+  chat_user_message_area_dark_color: string;
+  chat_user_message_area_border_width: number;
+  chat_ai_message_area_style: ChatMessageAreaStyle;
+  chat_ai_message_area_light_color: string;
+  chat_ai_message_area_dark_color: string;
+  chat_ai_message_area_border_width: number;
   code_theme: string;
   code_theme_light: string;
   default_provider_id: string | null;

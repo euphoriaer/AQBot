@@ -77,6 +77,27 @@ describe('ChatView assistant display policy', () => {
     expect(codeBlock).not.toContain('--chat-font-family');
   });
 
+  it('gates custom user and ai message area styles behind separate chat settings', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/chat/ChatView.tsx'), 'utf8');
+
+    expect(source).toContain("userMessageAreaStyle === 'background'");
+    expect(source).toContain("userMessageAreaStyle === 'border'");
+    expect(source).toContain("aiMessageAreaStyle === 'background'");
+    expect(source).toContain("aiMessageAreaStyle === 'border'");
+    expect(source).toContain("'--chat-user-message-area-color': isDarkMode");
+    expect(source).toContain("'--chat-ai-message-area-color': isDarkMode");
+    expect(source).toContain('.bubble-user-background .ant-bubble-end .ant-bubble-content');
+    expect(source).toContain('.bubble-user-border .ant-bubble-end .ant-bubble-content');
+    expect(source).toContain('.bubble-ai-background .ant-bubble-start .ant-bubble-content');
+    expect(source).toContain('.bubble-ai-border .ant-bubble-start .ant-bubble-content');
+    expect(source).toContain('padding: 8px 12px;');
+    expect(source).toContain('border-radius: 8px;');
+    expect(source).toContain('margin-block: 6px;');
+    expect(source).toContain('.bubble-ai-background .context-clear-bubble .ant-bubble-content');
+    expect(source).toContain('.bubble-ai-border .context-clear-bubble .ant-bubble-content');
+    expect(source).toContain('margin-block: 0;');
+  });
+
   it('resolves stable ai bubble keys through their parent message id', () => {
     const assistant = makeMessage({
       id: 'assistant-1',

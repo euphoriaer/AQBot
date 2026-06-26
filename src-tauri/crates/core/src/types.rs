@@ -650,6 +650,16 @@ pub struct AppSettings {
     /// Chat message content font weight.
     pub chat_font_weight: u16,
     pub bubble_style: String,
+    /// User message area style: "none" | "background" | "border".
+    pub chat_user_message_area_style: String,
+    pub chat_user_message_area_light_color: String,
+    pub chat_user_message_area_dark_color: String,
+    pub chat_user_message_area_border_width: u8,
+    /// AI message area style: "none" | "background" | "border".
+    pub chat_ai_message_area_style: String,
+    pub chat_ai_message_area_light_color: String,
+    pub chat_ai_message_area_dark_color: String,
+    pub chat_ai_message_area_border_width: u8,
     pub code_theme: String,
     pub code_theme_light: String,
     pub default_provider_id: Option<String>,
@@ -793,6 +803,14 @@ impl Default for AppSettings {
             chat_font_family: String::new(),
             chat_font_weight: 400,
             bubble_style: "minimal".to_string(),
+            chat_user_message_area_style: "background".to_string(),
+            chat_user_message_area_light_color: "rgba(0, 0, 0, 0)".to_string(),
+            chat_user_message_area_dark_color: "rgba(0, 0, 0, 0)".to_string(),
+            chat_user_message_area_border_width: 1,
+            chat_ai_message_area_style: "background".to_string(),
+            chat_ai_message_area_light_color: "#f5f5f5".to_string(),
+            chat_ai_message_area_dark_color: "rgba(255, 255, 255, 0.06)".to_string(),
+            chat_ai_message_area_border_width: 1,
             code_theme: "poimandres".to_string(),
             code_theme_light: "github-light".to_string(),
             default_provider_id: None,
@@ -957,12 +975,28 @@ mod app_settings_tests {
         assert_eq!(settings.chat_line_height, 1.7);
         assert_eq!(settings.chat_font_family, "");
         assert_eq!(settings.chat_font_weight, 400);
+        assert_eq!(settings.chat_user_message_area_style, "background");
+        assert_eq!(settings.chat_user_message_area_light_color, "rgba(0, 0, 0, 0)");
+        assert_eq!(settings.chat_user_message_area_dark_color, "rgba(0, 0, 0, 0)");
+        assert_eq!(settings.chat_user_message_area_border_width, 1);
+        assert_eq!(settings.chat_ai_message_area_style, "background");
+        assert_eq!(settings.chat_ai_message_area_light_color, "#f5f5f5");
+        assert_eq!(settings.chat_ai_message_area_dark_color, "rgba(255, 255, 255, 0.06)");
+        assert_eq!(settings.chat_ai_message_area_border_width, 1);
 
         let settings: AppSettings = serde_json::from_value(json!({
             "chat_font_size": 18,
             "chat_line_height": 1.8,
             "chat_font_family": "Inter",
-            "chat_font_weight": 500
+            "chat_font_weight": 500,
+            "chat_user_message_area_style": "border",
+            "chat_user_message_area_light_color": "rgba(1, 2, 3, 0.4)",
+            "chat_user_message_area_dark_color": "rgba(4, 5, 6, 0.5)",
+            "chat_user_message_area_border_width": 3,
+            "chat_ai_message_area_style": "background",
+            "chat_ai_message_area_light_color": "#eeeeee",
+            "chat_ai_message_area_dark_color": "rgba(255, 255, 255, 0.1)",
+            "chat_ai_message_area_border_width": 2
         }))
         .expect("settings should deserialize");
 
@@ -970,6 +1004,14 @@ mod app_settings_tests {
         assert_eq!(settings.chat_line_height, 1.8);
         assert_eq!(settings.chat_font_family, "Inter");
         assert_eq!(settings.chat_font_weight, 500);
+        assert_eq!(settings.chat_user_message_area_style, "border");
+        assert_eq!(settings.chat_user_message_area_light_color, "rgba(1, 2, 3, 0.4)");
+        assert_eq!(settings.chat_user_message_area_dark_color, "rgba(4, 5, 6, 0.5)");
+        assert_eq!(settings.chat_user_message_area_border_width, 3);
+        assert_eq!(settings.chat_ai_message_area_style, "background");
+        assert_eq!(settings.chat_ai_message_area_light_color, "#eeeeee");
+        assert_eq!(settings.chat_ai_message_area_dark_color, "rgba(255, 255, 255, 0.1)");
+        assert_eq!(settings.chat_ai_message_area_border_width, 2);
 
         let settings: AppSettings =
             serde_json::from_value(json!({})).expect("settings should default missing fields");
@@ -977,6 +1019,14 @@ mod app_settings_tests {
         assert_eq!(settings.chat_line_height, 1.7);
         assert_eq!(settings.chat_font_family, "");
         assert_eq!(settings.chat_font_weight, 400);
+        assert_eq!(settings.chat_user_message_area_style, "background");
+        assert_eq!(settings.chat_user_message_area_light_color, "rgba(0, 0, 0, 0)");
+        assert_eq!(settings.chat_user_message_area_dark_color, "rgba(0, 0, 0, 0)");
+        assert_eq!(settings.chat_user_message_area_border_width, 1);
+        assert_eq!(settings.chat_ai_message_area_style, "background");
+        assert_eq!(settings.chat_ai_message_area_light_color, "#f5f5f5");
+        assert_eq!(settings.chat_ai_message_area_dark_color, "rgba(255, 255, 255, 0.06)");
+        assert_eq!(settings.chat_ai_message_area_border_width, 1);
     }
 
     #[test]
