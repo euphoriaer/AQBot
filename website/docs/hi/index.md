@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot एक free open-source AI desktop client है जिसमें multi-model chat, Agent, MCP, Codex skills management, Exa search, ChatGPT/Cherry Studio/Kelivo import, local RAG, S3/WebDAV backup और built-in AI gateway है।"
+      content: "AQBot एक free open-source AI desktop client है जिसमें multi-model chat, Agent, MCP, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo import, local RAG, S3/WebDAV backup और built-in AI gateway है।"
 
 hero:
   name: AQBot
   text: "आपका AI desktop workspace"
-  tagline: "Multi-model chat, Agent, MCP tools, Codex skills, Exa search, API gateway, imports, knowledge base और backups एक local-first client में"
+  tagline: "Multi-model chat, Agent, MCP tools, Skills Management, Exa search, API gateway, imports, knowledge base और backups एक local-first client में"
   image:
     src: /logo.png
     alt: AQBot
@@ -44,7 +44,7 @@ features:
     details: "Tavily, Exa, Zhipu WebSearch और Bocha search with citations, query generation और local sqlite-vec knowledge bases।"
   - icon: book
     title: "Skills management"
-    details: "AQBot, Codex, Claude और Agents skills को `~/.codex/skills`, source filters, detail views, install targets और uninstall support के साथ manage करें।"
+    details: "AQBot, Codex, Claude और Agents के लिए multi-source skills, My Skills, groups, URL installs और skills.sh/GitHub marketplace manage करें।"
   - icon: cloud-server
     title: "API gateway"
     details: "Local OpenAI-compatible, OpenAI Responses, Claude और Gemini endpoints for Claude Code, Codex, OpenCode और custom tools।"

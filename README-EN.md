@@ -27,8 +27,6 @@
 
 ## Features
 
-AQBot is a local-first AI desktop workspace. This page is updated for v0.0.95 and covers recent Codex skills management, Exa search, third-party data import, MCP, HTML rendering, backup and gateway work.
-
 ### Chat & Models
 
 - **Multi-provider chat** — Connect OpenAI, Claude, Gemini, DeepSeek, Qwen and any OpenAI-compatible endpoint with custom Base URL, API Path, headers and proxy rules.
@@ -41,6 +39,13 @@ AQBot is a local-first AI desktop workspace. This page is updated for v0.0.95 an
 - **Agent mode** — Let the model read and edit files, run commands and analyze code inside a controlled desktop workflow.
 - **Permission control** — Choose standard review, auto-accept edits or full-access mode while keeping working-directory sandbox checks active.
 - **Approval and cost UI** — Review tool calls in real time, remember allow decisions and track token/cost usage for each agent session.
+
+### Skills Management
+
+- **Multi-source skill directories** — Manage AQBot, Codex, Claude and Agents skill roots, including `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` and `~/.agents/skills`.
+- **My Skills** — Filter by source, enable or disable skills, view details, copy names, open directories and uninstall.
+- **Skill groups and install targets** — Collapse skills by group, bulk enable/disable, open group folders, uninstall whole groups, and install from `owner/repo` or GitHub URLs into a chosen target.
+- **Marketplace** — Search skills.sh and GitHub sources, preview details, jump to GitHub and see installed status.
 
 ### Content Rendering
 
@@ -58,7 +63,6 @@ AQBot is a local-first AI desktop workspace. This page is updated for v0.0.95 an
 
 - **MCP protocol** — Run Model Context Protocol servers over stdio, SSE or StreamableHTTP.
 - **Built-in tools** — Use built-in MCP tools such as @aqbot/fetch and file search without installing a separate server.
-- **Codex skills management** — Manage Codex skills under `~/.codex/skills` with source filters, detail views, install targets and uninstall support.
 - **Tool loop limit** — Configure the maximum MCP tool-call loop count and recover more cleanly from interrupted or stuck tool sessions.
 
 ### API Gateway

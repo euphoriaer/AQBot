@@ -1,7 +1,5 @@
 # Características
 
-AQBot es un espacio de trabajo de IA de escritorio local-first. Esta página está actualizada para v0.0.95 e incluye gestión de skills de Codex, búsqueda Exa, importación de datos de terceros, MCP, renderizado HTML, copias de seguridad y pasarela.
-
 ## Chat y modelos
 
 - **Chat multi-proveedor** — Conecta OpenAI, Claude, Gemini, DeepSeek, Qwen y endpoints compatibles con OpenAI con Base URL, API Path, headers y proxy.
@@ -14,6 +12,13 @@ AQBot es un espacio de trabajo de IA de escritorio local-first. Esta página est
 - **Modo Agent** — El modelo puede editar archivos, ejecutar comandos y analizar código en un flujo controlado.
 - **Permisos** — Revisión estándar, aceptar ediciones automáticamente o acceso completo con sandbox del directorio de trabajo.
 - **Aprobación y coste** — Revisa tool calls, recuerda permisos y sigue tokens/coste por sesión.
+
+## Gestión de skills
+
+- **Directorios multi-origen** — Gestiona las raíces de skills de AQBot, Codex, Claude y Agents, incluidas `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` y `~/.agents/skills`.
+- **Mis skills** — Filtra por origen, activa/desactiva, consulta detalles, copia nombres, abre directorios y desinstala.
+- **Grupos y destinos de instalación** — Agrupa por group, activa/desactiva en lote, abre la carpeta del grupo, desinstala grupos completos e instala desde `owner/repo` o URLs de GitHub hacia un destino elegido.
+- **Marketplace** — Busca en skills.sh y GitHub, previsualiza detalles, abre GitHub y muestra el estado de instalación.
 
 ## Renderizado de contenido
 
@@ -31,7 +36,6 @@ AQBot es un espacio de trabajo de IA de escritorio local-first. Esta página est
 
 - **Protocolo MCP** — Ejecuta servidores Model Context Protocol por stdio, SSE o StreamableHTTP.
 - **Herramientas integradas** — Usa @aqbot/fetch y búsqueda de archivos sin servidor separado.
-- **Gestión de skills de Codex** — Gestiona Codex skills en `~/.codex/skills` con filtros de origen, detalles, destino de instalación y desinstalación.
 - **Límite de bucle** — Configura el máximo de bucles MCP y recupera mejor sesiones interrumpidas.
 
 ## Pasarela API

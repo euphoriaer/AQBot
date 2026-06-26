@@ -27,8 +27,6 @@
 
 ## Funktionen
 
-AQBot ist ein local-first KI-Desktop-Workspace. Diese Seite ist für v0.0.95 aktualisiert und beschreibt Codex-Skill-Verwaltung, Exa-Suche, Drittanbieter-Datenimport, MCP, HTML-Rendering, Backup und Gateway.
-
 ### Chat & Modelle
 
 - **Multi-Provider-Chat** — OpenAI, Claude, Gemini, DeepSeek, Qwen und OpenAI-kompatible Endpunkte mit Base URL, API Path, Headers und Proxy-Regeln verbinden.
@@ -41,6 +39,13 @@ AQBot ist ein local-first KI-Desktop-Workspace. Diese Seite ist für v0.0.95 akt
 - **Agent-Modus** — Das Modell kann Dateien bearbeiten, Befehle ausführen und Code in einem kontrollierten Workflow analysieren.
 - **Berechtigungen** — Standardprüfung, Auto-Accept-Edits oder Vollzugriff mit aktiver Arbeitsverzeichnis-Sandbox.
 - **Freigabe und Kosten** — Tool-Aufrufe prüfen, Entscheidungen merken und Tokens/Kosten pro Session verfolgen.
+
+### Skills-Verwaltung
+
+- **Multi-Source-Skill-Verzeichnisse** — AQBot-, Codex-, Claude- und Agents-Skill-Roots verwalten, inklusive `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` und `~/.agents/skills`.
+- **Meine Skills** — Nach Quelle filtern, aktivieren/deaktivieren, Details ansehen, Namen kopieren, Verzeichnis öffnen und deinstallieren.
+- **Skill-Gruppen und Installationsziele** — Skills per group einklappen, gesammelt aktivieren/deaktivieren, Gruppenordner öffnen, ganze Gruppen deinstallieren und aus `owner/repo` oder GitHub-URLs in ein Ziel installieren.
+- **Marketplace** — skills.sh- und GitHub-Quellen durchsuchen, Details ansehen, zu GitHub wechseln und Installationsstatus sehen.
 
 ### Inhaltsrendering
 
@@ -58,7 +63,6 @@ AQBot ist ein local-first KI-Desktop-Workspace. Diese Seite ist für v0.0.95 akt
 
 - **MCP-Protokoll** — Model Context Protocol-Server über stdio, SSE oder StreamableHTTP ausführen.
 - **Integrierte Tools** — @aqbot/fetch und Dateisuche ohne separaten Server nutzen.
-- **Codex-Skill-Verwaltung** — Codex skills unter `~/.codex/skills` mit Quellenfiltern, Detailansicht, Installationsziel und Deinstallation verwalten.
 - **Tool-Loop-Limit** — Maximale MCP Tool-Call-Schleifen konfigurieren und blockierte Sessions besser wiederherstellen.
 
 ### API-Gateway

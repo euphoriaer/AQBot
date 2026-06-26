@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot es un cliente IA de escritorio gratuito y open-source con chat multi-modelo, Agent, MCP, gestión de skills de Codex, búsqueda Exa, importación ChatGPT/Cherry Studio/Kelivo, RAG local, backup S3/WebDAV y pasarela IA integrada."
+      content: "AQBot es un cliente IA de escritorio gratuito y open-source con chat multi-modelo, Agent, MCP, gestión de skills, búsqueda Exa, importación ChatGPT/Cherry Studio/Kelivo, RAG local, backup S3/WebDAV y pasarela IA integrada."
 
 hero:
   name: AQBot
   text: "Tu espacio de trabajo IA de escritorio"
-  tagline: "Chat multi-modelo, Agent, herramientas MCP, skills de Codex, búsqueda Exa, pasarela API, importaciones, base de conocimiento y copias de seguridad en un cliente local-first"
+  tagline: "Chat multi-modelo, Agent, herramientas MCP, gestión de skills, búsqueda Exa, pasarela API, importaciones, base de conocimiento y copias de seguridad en un cliente local-first"
   image:
     src: /logo.png
     alt: AQBot
@@ -44,7 +44,7 @@ features:
     details: "Tavily, Exa, Zhipu WebSearch y Bocha con fuentes citadas, generación de consultas y base local sqlite-vec."
   - icon: book
     title: "Gestión de skills"
-    details: "Gestiona skills de AQBot, Codex, Claude y Agents con `~/.codex/skills`, filtros, detalles, instalación y desinstalación."
+    details: "Gestiona skills multi-origen, Mis skills, grupos, instalación por URL y marketplace skills.sh/GitHub para AQBot, Codex, Claude y Agents."
   - icon: cloud-server
     title: "Pasarela API"
     details: "Expone OpenAI Chat Completions, OpenAI Responses, Claude nativo y Gemini nativo desde la app."

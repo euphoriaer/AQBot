@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot — бесплатный open-source AI desktop client с multi-model chat, Agent, MCP, управлением Codex skills, поиском Exa, импортом ChatGPT/Cherry Studio/Kelivo, local RAG, S3/WebDAV backup и встроенным AI gateway."
+      content: "AQBot — бесплатный open-source AI desktop client с multi-model chat, Agent, MCP, управлением skills, поиском Exa, импортом ChatGPT/Cherry Studio/Kelivo, local RAG, S3/WebDAV backup и встроенным AI gateway."
 
 hero:
   name: AQBot
   text: "Ваш AI-десктоп workspace"
-  tagline: "Мультимодельный чат, Agent, MCP-инструменты, Codex skills, Exa search, API gateway, импорт данных, база знаний и backups в одном local-first клиенте"
+  tagline: "Мультимодельный чат, Agent, MCP-инструменты, управление skills, Exa search, API gateway, импорт данных, база знаний и backups в одном local-first клиенте"
   image:
     src: /logo.png
     alt: AQBot
@@ -44,7 +44,7 @@ features:
     details: "Tavily, Exa, Zhipu WebSearch и Bocha search с citations, query generation и local sqlite-vec knowledge bases."
   - icon: book
     title: "Управление skills"
-    details: "Управляйте AQBot, Codex, Claude и Agents skills: `~/.codex/skills`, фильтры источников, детали, установка и удаление."
+    details: "Управляйте multi-source skills, My Skills, группами, URL-установкой и marketplace skills.sh/GitHub для AQBot, Codex, Claude и Agents."
   - icon: cloud-server
     title: "API Gateway"
     details: "Локальные OpenAI-compatible, OpenAI Responses, Claude и Gemini endpoints для Claude Code, Codex, OpenCode и custom tools."

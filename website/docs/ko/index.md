@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot은 멀티 모델 채팅, Agent, MCP, Codex skills 관리, Exa search, ChatGPT/Cherry Studio/Kelivo 가져오기, 로컬 RAG, S3/WebDAV 백업, 내장 AI 게이트웨이를 지원하는 무료 오픈소스 AI 데스크톱 클라이언트입니다."
+      content: "AQBot은 멀티 모델 채팅, Agent, MCP, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo 가져오기, 로컬 RAG, S3/WebDAV 백업, 내장 AI 게이트웨이를 지원하는 무료 오픈소스 AI 데스크톱 클라이언트입니다."
 
 hero:
   name: AQBot
   text: "AI 데스크톱 워크스페이스"
-  tagline: "멀티 모델 채팅, Agent, MCP 도구, Codex skills, Exa search, API 게이트웨이, 가져오기, 지식베이스, 백업을 하나의 로컬 우선 클라이언트에 통합"
+  tagline: "멀티 모델 채팅, Agent, MCP 도구, Skills Management, Exa search, API 게이트웨이, 가져오기, 지식베이스, 백업을 하나의 로컬 우선 클라이언트에 통합"
   image:
     src: /logo.png
     alt: AQBot
@@ -44,7 +44,7 @@ features:
     details: "Tavily, Exa, Zhipu WebSearch, Bocha search와 cited sources, generated queries를 지원합니다."
   - icon: book
     title: "Skills 관리"
-    details: "AQBot, Codex, Claude, Agents skills를 `~/.codex/skills`, source filters, detail views, install targets, uninstall support와 함께 관리합니다."
+    details: "AQBot, Codex, Claude, Agents 전반의 multi-source skills, My Skills, groups, URL installs, skills.sh/GitHub marketplace를 관리합니다."
   - icon: cloud-server
     title: "API 게이트웨이"
     details: "OpenAI Chat Completions, OpenAI Responses, Claude-native, Gemini-native endpoints를 desktop app에서 노출합니다."

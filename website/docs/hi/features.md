@@ -1,7 +1,5 @@
 # विशेषताएँ
 
-AQBot एक local-first AI desktop workspace है। यह पेज v0.0.95 के लिए Codex skills management, Exa search, third-party data import, MCP, HTML rendering, backup और gateway क्षमताओं के साथ अपडेट किया गया है।
-
 ## चैट और मॉडल
 
 - **Multi-provider chat** — OpenAI, Claude, Gemini, DeepSeek, Qwen और OpenAI-compatible endpoints को Base URL, API Path, headers और proxy rules के साथ जोड़ें।
@@ -14,6 +12,13 @@ AQBot एक local-first AI desktop workspace है। यह पेज v0.0.95
 - **Agent mode** — Model controlled desktop workflow में files edit, commands run और code analysis कर सकता है।
 - **Permission control** — Standard review, auto-accept edits या full-access mode चुनें, working-directory sandbox checks active रहते हैं।
 - **Approval और cost UI** — Tool calls real time में review करें, allow decisions याद रखें और हर session का token/cost track करें।
+
+## Skills Management
+
+- **Multi-source skill directories** — AQBot, Codex, Claude और Agents skill roots manage करें, जिनमें `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` और `~/.agents/skills` शामिल हैं।
+- **My Skills** — Source filter, enable/disable, detail view, copy name, open directory और uninstall support।
+- **Skill groups और install targets** — group के आधार पर collapse, bulk enable/disable, group folder open, whole-group uninstall करें और `owner/repo` या GitHub URL से चुने हुए target में install करें।
+- **Marketplace** — skills.sh और GitHub sources search करें, details preview करें, GitHub खोलें और installed status देखें।
 
 ## सामग्री रेंडरिंग
 
@@ -31,7 +36,6 @@ AQBot एक local-first AI desktop workspace है। यह पेज v0.0.95
 
 - **MCP protocol** — stdio, SSE या StreamableHTTP transport वाले Model Context Protocol servers चलाएं।
 - **Built-in tools** — @aqbot/fetch और file search जैसे built-in MCP tools बिना अलग server के उपयोग करें।
-- **Codex skills management** — `~/.codex/skills` में Codex skills को source filters, detail views, install targets और uninstall support के साथ manage करें।
 - **Tool loop limit** — MCP tool-call loop count सेट करें और interrupted/stuck tool sessions से बेहतर recover करें।
 
 ## API gateway

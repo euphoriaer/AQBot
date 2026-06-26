@@ -1,7 +1,5 @@
 # Fonctionnalités
 
-AQBot est un espace de travail IA de bureau local-first. Cette page est mise à jour pour v0.0.95 avec la gestion des skills Codex, la recherche Exa, les imports tiers, MCP, le rendu HTML, les sauvegardes et la passerelle.
-
 ## Chat et modèles
 
 - **Chat multi-fournisseurs** — Connectez OpenAI, Claude, Gemini, DeepSeek, Qwen et tout endpoint compatible OpenAI avec Base URL, API Path, headers et proxy.
@@ -14,6 +12,13 @@ AQBot est un espace de travail IA de bureau local-first. Cette page est mise à 
 - **Mode Agent** — Le modèle peut éditer des fichiers, exécuter des commandes et analyser du code dans un workflow contrôlé.
 - **Contrôle des permissions** — Choisissez revue standard, acceptation automatique des éditions ou accès complet avec sandbox de dossier de travail.
 - **Approbation et coûts** — Inspectez les appels d’outils, mémorisez les autorisations et suivez tokens/coûts par session.
+
+## Gestion des skills
+
+- **Répertoires multi-sources** — Gérez les racines AQBot, Codex, Claude et Agents, dont `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` et `~/.agents/skills`.
+- **Mes skills** — Filtrez par source, activez/désactivez, consultez les détails, copiez le nom, ouvrez le dossier et désinstallez.
+- **Groupes et cibles d'installation** — Repliez les skills par group, activez/désactivez en lot, ouvrez le dossier du groupe, désinstallez le groupe entier et installez depuis `owner/repo` ou une URL GitHub vers la cible choisie.
+- **Marketplace** — Recherchez dans skills.sh et GitHub, prévisualisez les détails, ouvrez GitHub et voyez l'état d'installation.
 
 ## Rendu de contenu
 
@@ -31,7 +36,6 @@ AQBot est un espace de travail IA de bureau local-first. Cette page est mise à 
 
 - **Protocole MCP** — Exécutez des serveurs Model Context Protocol en stdio, SSE ou StreamableHTTP.
 - **Outils intégrés** — Utilisez @aqbot/fetch et la recherche de fichiers sans serveur séparé.
-- **Gestion des skills Codex** — Gérez les Codex skills dans `~/.codex/skills` avec filtres de source, détails, cible d'installation et désinstallation.
 - **Limite de boucle outils** — Configurez le nombre maximal de boucles MCP et récupérez mieux les sessions bloquées.
 
 ## Passerelle API

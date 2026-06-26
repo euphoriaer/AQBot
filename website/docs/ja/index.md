@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot は無料のオープンソース AI デスクトップクライアントです。マルチモデルチャット、Agent、MCP、Codex skills 管理、Exa 検索、ChatGPT/Cherry Studio/Kelivo インポート、ローカル RAG、S3/WebDAV バックアップ、内蔵 AI ゲートウェイをサポートします。"
+      content: "AQBot は無料のオープンソース AI デスクトップクライアントです。マルチモデルチャット、Agent、MCP、Skills 管理、Exa 検索、ChatGPT/Cherry Studio/Kelivo インポート、ローカル RAG、S3/WebDAV バックアップ、内蔵 AI ゲートウェイをサポートします。"
 
 hero:
   name: AQBot
   text: "AI デスクトップワークスペース"
-  tagline: "マルチモデルチャット、Agent、MCP ツール、Codex skills、Exa 検索、API ゲートウェイ、インポート、ナレッジベース、バックアップを 1 つのローカルファーストクライアントに統合"
+  tagline: "マルチモデルチャット、Agent、MCP ツール、Skills 管理、Exa 検索、API ゲートウェイ、インポート、ナレッジベース、バックアップを 1 つのローカルファーストクライアントに統合"
   image:
     src: /logo.png
     alt: AQBot
@@ -44,7 +44,7 @@ features:
     details: "Tavily、Exa、Zhipu WebSearch、Bocha 検索、引用、クエリ生成、ローカル sqlite-vec ナレッジベース、取得フィードバック。"
   - icon: book
     title: "Skills 管理"
-    details: "AQBot、Codex、Claude、Agents skills を管理し、`~/.codex/skills`、ソース絞り込み、詳細表示、インストール、アンインストールに対応。"
+    details: "AQBot、Codex、Claude、Agents にまたがる複数ソース skills、My Skills、グループ、URL インストール、skills.sh/GitHub marketplace を管理。"
   - icon: cloud-server
     title: "API ゲートウェイ"
     details: "OpenAI 互換、OpenAI Responses、Claude、Gemini のローカル API を Claude Code、Codex、OpenCode などに提供。"

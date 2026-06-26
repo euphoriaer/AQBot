@@ -27,8 +27,6 @@
 
 ## الميزات
 
-AQBot هو مساحة عمل AI مكتبية local-first. تم تحديث هذه الصفحة لـ v0.0.95 لتشمل Codex skills management وExa search وimport للبيانات من التطبيقات الأخرى وMCP وHTML rendering وbackup وgateway.
-
 ### الدردشة والنماذج
 
 - **Multi-provider chat** — اربط OpenAI وClaude وGemini وDeepSeek وQwen وأي OpenAI-compatible endpoint مع Base URL وAPI Path وheaders وproxy rules.
@@ -41,6 +39,13 @@ AQBot هو مساحة عمل AI مكتبية local-first. تم تحديث هذه
 - **Agent mode** — يمكن للنموذج تعديل الملفات وتشغيل الأوامر وتحليل الكود داخل desktop workflow مضبوط.
 - **التحكم في الصلاحيات** — اختر standard review أو auto-accept edits أو full-access mode مع استمرار working-directory sandbox checks.
 - **الموافقة والتكلفة** — راجع tool calls لحظياً، واحفظ allow decisions، وتابع token/cost لكل session.
+
+### Skills Management
+
+- **Multi-source skill directories** — أدر AQBot وCodex وClaude وAgents skill roots، بما فيها `~/.aqbot/skills` و`~/.codex/skills` و`~/.claude/skills` و`~/.agents/skills`.
+- **My Skills** — يدعم source filter وenable/disable وdetail view وcopy name وopen directory وuninstall.
+- **Skill groups and install targets** — اطوِ حسب group، ونفّذ bulk enable/disable، وافتح group folder، واحذف whole group، وثبّت من `owner/repo` أو GitHub URL إلى target تختاره.
+- **Marketplace** — ابحث في skills.sh وGitHub، وعاين details، وافتح GitHub، واعرض installed status.
 
 ### عرض المحتوى
 
@@ -58,7 +63,6 @@ AQBot هو مساحة عمل AI مكتبية local-first. تم تحديث هذه
 
 - **MCP protocol** — شغّل Model Context Protocol servers عبر stdio أو SSE أو StreamableHTTP.
 - **Built-in tools** — استخدم @aqbot/fetch وfile search بدون تثبيت server منفصل.
-- **Codex skills management** — أدر Codex skills داخل `~/.codex/skills` مع source filters وdetail views وinstall targets وuninstall support.
 - **Tool loop limit** — اضبط MCP tool-call loop count واستعد بشكل أفضل من interrupted أو stuck tool sessions.
 
 ### API gateway
