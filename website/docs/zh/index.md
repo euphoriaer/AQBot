@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot 是免费开源的 AI 桌面客户端，支持多模型对话、Agent、MCP、ChatGPT/Cherry Studio/Kelivo 导入、本地知识库、S3/WebDAV 备份和内置 AI 网关。"
+      content: "AQBot 是免费开源的 AI 桌面客户端，支持多模型对话、Agent、MCP、Codex 技能管理、Exa 搜索、ChatGPT/Cherry Studio/Kelivo 导入、本地知识库、S3/WebDAV 备份和内置 AI 网关。"
 
 hero:
   name: AQBot
   text: "你的 AI 桌面工作台"
-  tagline: "多模型对话、Agent、MCP 工具、API 网关、数据导入、知识库和备份整合在一个本地优先客户端里"
+  tagline: "多模型对话、Agent、MCP 工具、Codex 技能、Exa 搜索、API 网关、数据导入、知识库和备份整合在一个本地优先客户端里"
   image:
     src: /logo.png
     alt: AQBot
@@ -41,7 +41,10 @@ features:
     details: "Markdown、LaTeX、Mermaid、D2、Monaco 代码块、HTML 片段和 Artifact 预览。"
   - icon: search
     title: "搜索与 RAG"
-    details: "带引用的联网搜索、查询生成、本地 sqlite-vec 知识库、重排设置和检索反馈。"
+    details: "Tavily、Exa、智谱 WebSearch、Bocha 搜索，带引用、查询生成、本地 sqlite-vec 知识库和检索反馈。"
+  - icon: book
+    title: "技能管理"
+    details: "管理 AQBot、Codex、Claude 和 Agents skills，支持 `~/.codex/skills`、来源筛选、详情查看、安装和卸载。"
   - icon: cloud-server
     title: "API 网关"
     details: "本地 OpenAI 兼容、OpenAI Responses、Claude 和 Gemini 接口，服务 Claude Code、Codex、OpenCode 等工具。"

@@ -27,7 +27,7 @@
 
 ## Características
 
-AQBot es un espacio de trabajo de IA de escritorio local-first. Esta página está actualizada para v0.0.85 e incluye importación de proveedores, importación de datos de terceros, MCP, renderizado HTML, copias de seguridad y pasarela.
+AQBot es un espacio de trabajo de IA de escritorio local-first. Esta página está actualizada para v0.0.95 e incluye gestión de skills de Codex, búsqueda Exa, importación de datos de terceros, MCP, renderizado HTML, copias de seguridad y pasarela.
 
 ### Chat y modelos
 
@@ -50,7 +50,7 @@ AQBot es un espacio de trabajo de IA de escritorio local-first. Esta página est
 
 ### Búsqueda y conocimiento
 
-- **Búsqueda web** — Tavily, Zhipu WebSearch, Bocha con fuentes citadas y generación de consultas.
+- **Búsqueda web** — Tavily, Exa, Zhipu WebSearch, Bocha con fuentes citadas y generación de consultas.
 - **Base de conocimiento local** — Indexa documentos privados con sqlite-vec y ajusta retrieval/rerank con feedback.
 - **Gestión de contexto** — Adjunta archivos, resultados, fragmentos, memorias y salida de herramientas.
 
@@ -58,6 +58,7 @@ AQBot es un espacio de trabajo de IA de escritorio local-first. Esta página est
 
 - **Protocolo MCP** — Ejecuta servidores Model Context Protocol por stdio, SSE o StreamableHTTP.
 - **Herramientas integradas** — Usa @aqbot/fetch y búsqueda de archivos sin servidor separado.
+- **Gestión de skills de Codex** — Gestiona Codex skills en `~/.codex/skills` con filtros de origen, detalles, destino de instalación y desinstalación.
 - **Límite de bucle** — Configura el máximo de bucles MCP y recupera mejor sesiones interrumpidas.
 
 ### Pasarela API

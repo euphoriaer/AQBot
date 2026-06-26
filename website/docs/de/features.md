@@ -1,6 +1,6 @@
 # Funktionen
 
-AQBot ist ein local-first KI-Desktop-Workspace. Diese Seite ist für v0.0.85 aktualisiert und beschreibt Provider-Import, Drittanbieter-Datenimport, MCP, HTML-Rendering, Backup und Gateway.
+AQBot ist ein local-first KI-Desktop-Workspace. Diese Seite ist für v0.0.95 aktualisiert und beschreibt Codex-Skill-Verwaltung, Exa-Suche, Drittanbieter-Datenimport, MCP, HTML-Rendering, Backup und Gateway.
 
 ## Chat & Modelle
 
@@ -23,7 +23,7 @@ AQBot ist ein local-first KI-Desktop-Workspace. Diese Seite ist für v0.0.85 akt
 
 ## Suche & Wissen
 
-- **Websuche** — Tavily, Zhipu WebSearch, Bocha mit Quellenangaben und Suchquery-Generierung.
+- **Websuche** — Tavily, Exa, Zhipu WebSearch, Bocha mit Quellenangaben und Suchquery-Generierung.
 - **Lokale Wissensbasis** — Private Dokumente mit sqlite-vec indexieren, Retrieval/Rerank konfigurieren und Feedback prüfen.
 - **Kontextverwaltung** — Dateien, Suchergebnisse, Wissensausschnitte, Erinnerungen und Tool-Ausgaben anhängen.
 
@@ -31,6 +31,7 @@ AQBot ist ein local-first KI-Desktop-Workspace. Diese Seite ist für v0.0.85 akt
 
 - **MCP-Protokoll** — Model Context Protocol-Server über stdio, SSE oder StreamableHTTP ausführen.
 - **Integrierte Tools** — @aqbot/fetch und Dateisuche ohne separaten Server nutzen.
+- **Codex-Skill-Verwaltung** — Codex skills unter `~/.codex/skills` mit Quellenfiltern, Detailansicht, Installationsziel und Deinstallation verwalten.
 - **Tool-Loop-Limit** — Maximale MCP Tool-Call-Schleifen konfigurieren und blockierte Sessions besser wiederherstellen.
 
 ## API-Gateway

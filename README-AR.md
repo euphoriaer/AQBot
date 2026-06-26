@@ -27,7 +27,7 @@
 
 ## الميزات
 
-AQBot هو مساحة عمل AI مكتبية local-first. تم تحديث هذه الصفحة لـ v0.0.85 لتشمل import للمزوّدين، import للبيانات من التطبيقات الأخرى، MCP، HTML rendering، backup وgateway.
+AQBot هو مساحة عمل AI مكتبية local-first. تم تحديث هذه الصفحة لـ v0.0.95 لتشمل Codex skills management وExa search وimport للبيانات من التطبيقات الأخرى وMCP وHTML rendering وbackup وgateway.
 
 ### الدردشة والنماذج
 
@@ -50,7 +50,7 @@ AQBot هو مساحة عمل AI مكتبية local-first. تم تحديث هذه
 
 ### البحث والمعرفة
 
-- **Web search** — يدعم Tavily وZhipu WebSearch وBocha مع cited sources وgenerated search queries.
+- **Web search** — يدعم Tavily وExa وZhipu WebSearch وBocha مع cited sources وgenerated search queries.
 - **Local knowledge base** — افهرس private documents باستخدام sqlite-vec واضبط retrieval/rerank options وراجع retrieval feedback.
 - **Context management** — أضف files وsearch results وknowledge snippets وmemories وtool output إلى conversation context.
 
@@ -58,6 +58,7 @@ AQBot هو مساحة عمل AI مكتبية local-first. تم تحديث هذه
 
 - **MCP protocol** — شغّل Model Context Protocol servers عبر stdio أو SSE أو StreamableHTTP.
 - **Built-in tools** — استخدم @aqbot/fetch وfile search بدون تثبيت server منفصل.
+- **Codex skills management** — أدر Codex skills داخل `~/.codex/skills` مع source filters وdetail views وinstall targets وuninstall support.
 - **Tool loop limit** — اضبط MCP tool-call loop count واستعد بشكل أفضل من interrupted أو stuck tool sessions.
 
 ### API gateway

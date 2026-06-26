@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot ist ein kostenloser Open-Source KI-Desktop-Client mit Multi-Modell-Chat, Agent, MCP, ChatGPT/Cherry Studio/Kelivo-Import, lokalem RAG, S3/WebDAV-Backup und integriertem KI-Gateway."
+      content: "AQBot ist ein kostenloser Open-Source KI-Desktop-Client mit Multi-Modell-Chat, Agent, MCP, Codex-Skill-Verwaltung, Exa-Suche, ChatGPT/Cherry Studio/Kelivo-Import, lokalem RAG, S3/WebDAV-Backup und integriertem KI-Gateway."
 
 hero:
   name: AQBot
   text: "Ihr KI-Desktop-Workspace"
-  tagline: "Multi-Modell-Chat, Agent, MCP-Tools, API-Gateway, Importe, Wissensbasis und Backups in einem local-first Client"
+  tagline: "Multi-Modell-Chat, Agent, MCP-Tools, Codex skills, Exa-Suche, API-Gateway, Importe, Wissensbasis und Backups in einem local-first Client"
   image:
     src: /logo.png
     alt: AQBot
@@ -41,7 +41,10 @@ features:
     details: "Markdown, Code, Tabellen, Aufgabenlisten und LaTeX in Streaming-Gesprächen rendern."
   - icon: search
     title: "Suche & Wissen"
-    details: "Tavily, Zhipu WebSearch, Bocha mit Quellenangaben und Suchquery-Generierung."
+    details: "Tavily, Exa, Zhipu WebSearch und Bocha mit Quellenangaben, Suchquery-Generierung und lokaler sqlite-vec-Wissensbasis."
+  - icon: book
+    title: "Skill-Verwaltung"
+    details: "AQBot, Codex, Claude und Agents skills mit `~/.codex/skills`, Quellenfiltern, Details, Installation und Deinstallation verwalten."
   - icon: cloud-server
     title: "API-Gateway"
     details: "OpenAI Chat Completions, OpenAI Responses, Claude-native und Gemini-native Endpoints lokal bereitstellen."

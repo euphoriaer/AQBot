@@ -1,6 +1,6 @@
 # विशेषताएँ
 
-AQBot एक local-first AI desktop workspace है। यह पेज v0.0.85 के लिए provider import, third-party data import, MCP, HTML rendering, backup और gateway क्षमताओं के साथ अपडेट किया गया है।
+AQBot एक local-first AI desktop workspace है। यह पेज v0.0.95 के लिए Codex skills management, Exa search, third-party data import, MCP, HTML rendering, backup और gateway क्षमताओं के साथ अपडेट किया गया है।
 
 ## चैट और मॉडल
 
@@ -23,7 +23,7 @@ AQBot एक local-first AI desktop workspace है। यह पेज v0.0.85
 
 ## खोज और ज्ञान
 
-- **Web search** — Tavily, Zhipu WebSearch, Bocha आदि cited sources और generated search queries के साथ।
+- **Web search** — Tavily, Exa, Zhipu WebSearch, Bocha आदि cited sources और generated search queries के साथ।
 - **Local knowledge base** — sqlite-vec से private documents index करें, retrieval/rerank options tune करें और retrieval feedback देखें।
 - **Context management** — Files, search results, knowledge snippets, memories और tool output को conversation context में जोड़ें।
 
@@ -31,6 +31,7 @@ AQBot एक local-first AI desktop workspace है। यह पेज v0.0.85
 
 - **MCP protocol** — stdio, SSE या StreamableHTTP transport वाले Model Context Protocol servers चलाएं।
 - **Built-in tools** — @aqbot/fetch और file search जैसे built-in MCP tools बिना अलग server के उपयोग करें।
+- **Codex skills management** — `~/.codex/skills` में Codex skills को source filters, detail views, install targets और uninstall support के साथ manage करें।
 - **Tool loop limit** — MCP tool-call loop count सेट करें और interrupted/stuck tool sessions से बेहतर recover करें।
 
 ## API gateway
