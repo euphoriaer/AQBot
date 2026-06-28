@@ -13,6 +13,12 @@
 - **권한 제어** — standard review, auto-accept edits, full-access mode를 선택하고 working-directory sandbox checks를 유지합니다.
 - **승인 및 비용 UI** — tool calls를 실시간 검토하고 allow decisions를 기억하며 session token/cost를 추적합니다.
 
+## 역할
+
+- **로컬 역할 관리** — system prompt, avatar, tags, opening message, starter questions, temperature, Top P를 재사용 가능한 conversation template로 저장합니다.
+- **원클릭 사용** — 기본 동작은 새 역할 대화 생성이며 dropdown에서 현재 대화에 적용할 수도 있습니다. 역할 대화는 이름, avatar, 파란색 역할 badge를 유지합니다.
+- **온라인 마켓** — prompts.chat과 PlexPt 中文 source에서 역할을 검색하고 설치한 뒤 로컬 역할로 사용할 수 있습니다.
+
 ## Skills Management
 
 - **Multi-source skill directories** — AQBot, Codex, Claude, Agents skill roots를 관리하며 `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills`, `~/.agents/skills`를 지원합니다.

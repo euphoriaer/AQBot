@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot ist ein kostenloser Open-Source KI-Desktop-Client mit Multi-Modell-Chat, Agent, MCP, Skills-Verwaltung, Exa-Suche, ChatGPT/Cherry Studio/Kelivo-Import, lokalem RAG, S3/WebDAV-Backup und integriertem KI-Gateway."
+      content: "AQBot ist ein kostenloser Open-Source-AI-Desktop-Client mit Multi-Modell-Chat, Rollen, Agent, MCP, Skills-Verwaltung, Exa-Suche, ChatGPT/Cherry Studio/Kelivo-Import, lokaler Wissensbasis, S3/WebDAV-Backups und integriertem AI-Gateway."
 
 hero:
   name: AQBot
   text: "Ihr KI-Desktop-Workspace"
-  tagline: "Multi-Modell-Chat, Agent, MCP-Tools, Skills-Verwaltung, Exa-Suche, API-Gateway, Importe, Wissensbasis und Backups in einem local-first Client"
+  tagline: "Multi-Modell-Chat, Rollen, Agent, MCP-Tools, Skills-Verwaltung, Exa-Suche, API-Gateway, Importe, Wissensbasis und Backups in einem local-first Client"
   image:
     src: /logo.png
     alt: AQBot
@@ -36,6 +36,9 @@ features:
   - icon: thunderbolt
     title: "AI Agent"
     details: "Das Modell kann Dateien bearbeiten, Befehle ausführen und Code in einem kontrollierten Workflow analysieren."
+  - icon: book
+    title: "Rollen"
+    details: "Prompts, Avatare, Begrüßungen, Startfragen, Temperatur und Top P speichern und Rollen aus prompts.chat/PlexPt 中文 installieren."
   - icon: edit
     title: "Inhaltsrendering"
     details: "Markdown, Code, Tabellen, Aufgabenlisten und LaTeX in Streaming-Gesprächen rendern."

@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot is a free, open-source AI desktop client with multi-model chat, Agent mode, MCP tools, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo import, local RAG, S3/WebDAV backup, and a built-in AI gateway."
+      content: "AQBot is a free open-source AI desktop client with multi-model chat, roles, Agent, MCP, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo import, local knowledge bases, S3/WebDAV backups and a built-in AI gateway."
 
 hero:
   name: AQBot
   text: "Your AI Desktop Workspace"
-  tagline: "Multi-model chat, Agent, MCP tools, Skills Management, Exa search, API gateway, imports, knowledge base and backups in one local-first client"
+  tagline: "Multi-model chat, Roles, Agent, MCP tools, Skills Management, Exa search, API gateway, imports, knowledge base and backups in one local-first client"
   image:
     src: /logo.png
     alt: AQBot
@@ -36,6 +36,9 @@ features:
   - icon: thunderbolt
     title: "AI Agent"
     details: "File edits, commands and code analysis with permission levels, working-directory sandboxing, approval UI and cost tracking."
+  - icon: book
+    title: "Roles"
+    details: "Save reusable role templates with prompts, avatars, opening messages, starter questions and sampling settings, plus install roles from prompts.chat and PlexPt 中文."
   - icon: edit
     title: "Rich Rendering"
     details: "Markdown, LaTeX, Mermaid, D2, Monaco code blocks, HTML fragments and Artifact previews built for streaming replies."

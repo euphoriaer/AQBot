@@ -40,6 +40,12 @@
 - **権限制御** — 標準レビュー、自動編集承認、フルアクセスを選べ、作業ディレクトリのサンドボックスチェックは維持されます。
 - **承認とコスト UI** — ツール呼び出しをリアルタイムで確認し、許可判断を記憶し、各 Agent セッションの token とコストを追跡できます。
 
+### ロール
+
+- **ローカルロール管理** — system prompt、avatar、tag、opening message、starter questions、temperature、Top P を再利用可能な会話テンプレートとして保存します。
+- **ワンクリック利用** — デフォルトでは新しいロール会話を作成し、ドロップダウンから現在の会話にも適用できます。ロール会話は名前、avatar、青いロールバッジを保持します。
+- **オンラインマーケット** — prompts.chat と PlexPt 中文ソースからロールを検索・インストールし、ローカルで利用できます。
+
 ### Skills 管理
 
 - **複数ソースの skills ディレクトリ** — AQBot、Codex、Claude、Agents の skills ルートを管理します。`~/.aqbot/skills`、`~/.codex/skills`、`~/.claude/skills`、`~/.agents/skills` に対応します。

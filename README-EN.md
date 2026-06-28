@@ -40,6 +40,12 @@
 - **Permission control** — Choose standard review, auto-accept edits or full-access mode while keeping working-directory sandbox checks active.
 - **Approval and cost UI** — Review tool calls in real time, remember allow decisions and track token/cost usage for each agent session.
 
+### Roles
+
+- **Local role templates** — Save system prompts, avatars, tags, opening messages, starter questions, temperature and Top P as reusable conversation templates.
+- **One-click use** — Start a new role conversation by default, or apply a role to the current conversation from the dropdown; role chats keep the role name, avatar and blue Roles badge.
+- **Marketplace** — Search and install roles from prompts.chat and PlexPt 中文 sources, then use them locally.
+
 ### Skills Management
 
 - **Multi-source skill directories** — Manage AQBot, Codex, Claude and Agents skill roots, including `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` and `~/.agents/skills`.

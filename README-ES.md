@@ -40,6 +40,12 @@
 - **Permisos** — Revisión estándar, aceptar ediciones automáticamente o acceso completo con sandbox del directorio de trabajo.
 - **Aprobación y coste** — Revisa tool calls, recuerda permisos y sigue tokens/coste por sesión.
 
+### Roles
+
+- **Gestión local de roles** — Guarda system prompts, avatares, etiquetas, mensajes iniciales, preguntas de inicio, temperatura y Top P como plantillas de conversación reutilizables.
+- **Uso con un clic** — Crea por defecto una nueva conversación de rol, o aplica el rol a la conversación actual desde el menú; las conversaciones de rol conservan nombre, avatar y badge azul de Roles.
+- **Marketplace** — Busca e instala roles desde prompts.chat y PlexPt 中文 para usarlos localmente.
+
 ### Gestión de skills
 
 - **Directorios multi-origen** — Gestiona las raíces de skills de AQBot, Codex, Claude y Agents, incluidas `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` y `~/.agents/skills`.

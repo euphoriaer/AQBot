@@ -13,6 +13,12 @@
 - **Contrôle des permissions** — Choisissez revue standard, acceptation automatique des éditions ou accès complet avec sandbox de dossier de travail.
 - **Approbation et coûts** — Inspectez les appels d’outils, mémorisez les autorisations et suivez tokens/coûts par session.
 
+## Rôles
+
+- **Gestion locale des rôles** — Enregistrez system prompts, avatars, tags, messages d’ouverture, questions de départ, température et Top P comme modèles de conversation réutilisables.
+- **Utilisation en un clic** — Créez par défaut une nouvelle conversation de rôle, ou appliquez le rôle à la conversation courante depuis le menu ; les conversations de rôle gardent le nom, l’avatar et le badge bleu Rôles.
+- **Marketplace** — Recherchez et installez des rôles depuis prompts.chat et PlexPt 中文, puis utilisez-les localement.
+
 ## Gestion des skills
 
 - **Répertoires multi-sources** — Gérez les racines AQBot, Codex, Claude et Agents, dont `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` et `~/.agents/skills`.

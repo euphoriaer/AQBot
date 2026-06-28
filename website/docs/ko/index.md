@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot은 멀티 모델 채팅, Agent, MCP, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo 가져오기, 로컬 RAG, S3/WebDAV 백업, 내장 AI 게이트웨이를 지원하는 무료 오픈소스 AI 데스크톱 클라이언트입니다."
+      content: "AQBot은 멀티 모델 채팅, 역할, Agent, MCP, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo 가져오기, 로컬 지식베이스, S3/WebDAV 백업, 내장 AI 게이트웨이를 지원하는 무료 오픈소스 AI 데스크톱 클라이언트입니다."
 
 hero:
   name: AQBot
   text: "AI 데스크톱 워크스페이스"
-  tagline: "멀티 모델 채팅, Agent, MCP 도구, Skills Management, Exa search, API 게이트웨이, 가져오기, 지식베이스, 백업을 하나의 로컬 우선 클라이언트에 통합"
+  tagline: "멀티 모델 채팅, 역할, Agent, MCP 도구, Skills Management, Exa search, API 게이트웨이, 가져오기, 지식베이스, 백업을 하나의 로컬 우선 클라이언트에 통합"
   image:
     src: /logo.png
     alt: AQBot
@@ -36,6 +36,9 @@ features:
   - icon: thunderbolt
     title: "AI Agent"
     details: "모델이 controlled workflow에서 files edit, commands run, code analysis를 수행합니다."
+  - icon: book
+    title: "역할"
+    details: "system prompt, avatar, opening message, starter questions, temperature, Top P를 저장하고 prompts.chat/PlexPt 中文에서 역할을 설치합니다."
   - icon: edit
     title: "콘텐츠 렌더링"
     details: "Markdown, code highlighting, tables, task lists, LaTeX를 streaming conversation에서 렌더링합니다."

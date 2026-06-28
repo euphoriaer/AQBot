@@ -13,6 +13,12 @@
 - **التحكم في الصلاحيات** — اختر standard review أو auto-accept edits أو full-access mode مع استمرار working-directory sandbox checks.
 - **الموافقة والتكلفة** — راجع tool calls لحظياً، واحفظ allow decisions، وتابع token/cost لكل session.
 
+## Roles
+
+- **Local role management** — احفظ system prompts وavatars وtags وopening messages وstarter questions وtemperature وTop P كقوالب conversation قابلة لإعادة الاستخدام.
+- **One-click use** — السلوك الافتراضي ينشئ role conversation جديداً، ويمكن تطبيق role على المحادثة الحالية من dropdown؛ role chats تحتفظ بالاسم وavatar وblue Roles badge.
+- **Online marketplace** — ابحث وثبّت roles من prompts.chat وPlexPt 中文 ثم استخدمها محلياً.
+
 ## Skills Management
 
 - **Multi-source skill directories** — أدر AQBot وCodex وClaude وAgents skill roots، بما فيها `~/.aqbot/skills` و`~/.codex/skills` و`~/.claude/skills` و`~/.agents/skills`.

@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot 是免費開源的 AI 桌面客戶端，支援多模型對話、Agent、MCP、Skills 管理、Exa 搜尋、ChatGPT/Cherry Studio/Kelivo 匯入、本機知識庫、S3/WebDAV 備份和內建 AI 閘道。"
+      content: "AQBot 是免費開源的 AI 桌面客戶端，支援多模型對話、角色、Agent、MCP、Skills 管理、Exa 搜尋、ChatGPT/Cherry Studio/Kelivo 匯入、本機知識庫、S3/WebDAV 備份和內建 AI 閘道。"
 
 hero:
   name: AQBot
   text: "你的 AI 桌面工作台"
-  tagline: "多模型對話、Agent、MCP 工具、Skills 管理、Exa 搜尋、API 閘道、資料匯入、知識庫和備份整合在一個本機優先客戶端裡"
+  tagline: "多模型對話、角色、Agent、MCP 工具、Skills 管理、Exa 搜尋、API 閘道、資料匯入、知識庫和備份整合在一個本機優先客戶端裡"
   image:
     src: /logo.png
     alt: AQBot
@@ -36,6 +36,9 @@ features:
   - icon: thunderbolt
     title: "AI Agent"
     details: "檔案編輯、命令執行和程式碼分析，帶權限分級、工作目錄沙箱、審批 UI 和成本統計。"
+  - icon: book
+    title: "角色"
+    details: "儲存系統提示詞、頭像、開場白、開場問題、溫度和 Top P，一鍵建立角色對話，並從 prompts.chat/PlexPt 中文安裝角色。"
   - icon: edit
     title: "富內容渲染"
     details: "Markdown、LaTeX、Mermaid、D2、Monaco 程式碼區塊、HTML 片段和 Artifact 預覽。"

@@ -13,6 +13,12 @@
 - **Permission control** — Standard review, auto-accept edits या full-access mode चुनें, working-directory sandbox checks active रहते हैं।
 - **Approval और cost UI** — Tool calls real time में review करें, allow decisions याद रखें और हर session का token/cost track करें।
 
+## Roles
+
+- **Local role management** — System prompts, avatars, tags, opening messages, starter questions, temperature और Top P को reusable conversation templates की तरह save करें।
+- **One-click use** — Default में नया role conversation बनता है, dropdown से current conversation पर apply भी कर सकते हैं; role chats name, avatar और blue Roles badge रखते हैं।
+- **Online marketplace** — prompts.chat और PlexPt 中文 sources से roles search/install करें और local roles की तरह use करें।
+
 ## Skills Management
 
 - **Multi-source skill directories** — AQBot, Codex, Claude और Agents skill roots manage करें, जिनमें `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` और `~/.agents/skills` शामिल हैं।

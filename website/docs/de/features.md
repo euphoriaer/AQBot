@@ -13,6 +13,12 @@
 - **Berechtigungen** — Standardprüfung, Auto-Accept-Edits oder Vollzugriff mit aktiver Arbeitsverzeichnis-Sandbox.
 - **Freigabe und Kosten** — Tool-Aufrufe prüfen, Entscheidungen merken und Tokens/Kosten pro Session verfolgen.
 
+## Rollen
+
+- **Lokale Rollenverwaltung** — System Prompts, Avatare, Tags, Begrüßungen, Startfragen, Temperatur und Top P als wiederverwendbare Gesprächsvorlagen speichern.
+- **Ein-Klick-Nutzung** — Standardmäßig eine neue Rollenunterhaltung starten oder die Rolle per Dropdown auf die aktuelle Unterhaltung anwenden; Rollenunterhaltungen behalten Name, Avatar und blaues Rollen-Badge.
+- **Marketplace** — Rollen aus prompts.chat und PlexPt 中文 suchen, installieren und lokal verwenden.
+
 ## Skills-Verwaltung
 
 - **Multi-Source-Skill-Verzeichnisse** — AQBot-, Codex-, Claude- und Agents-Skill-Roots verwalten, inklusive `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` und `~/.agents/skills`.

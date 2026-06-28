@@ -13,6 +13,12 @@
 - **Контроль прав** — Выбирайте стандартную проверку, auto-accept edits или full-access mode при активной sandbox рабочего каталога.
 - **Одобрения и стоимость** — Проверяйте tool calls в реальном времени, запоминайте разрешения и отслеживайте token/cost по каждой сессии.
 
+## Роли
+
+- **Локальное управление ролями** — Сохраняйте system prompts, avatars, tags, opening messages, starter questions, temperature и Top P как переиспользуемые шаблоны разговоров.
+- **Использование в один клик** — По умолчанию создается новый role conversation, а через dropdown роль можно применить к текущему разговору; role chats сохраняют имя, avatar и синее Roles badge.
+- **Marketplace** — Ищите и устанавливайте роли из prompts.chat и PlexPt 中文, затем используйте их локально.
+
 ## Управление skills
 
 - **Многоисточниковые каталоги skills** — Управляйте корнями AQBot, Codex, Claude и Agents, включая `~/.aqbot/skills`, `~/.codex/skills`, `~/.claude/skills` и `~/.agents/skills`.

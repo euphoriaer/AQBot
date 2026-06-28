@@ -6,12 +6,12 @@ titleTemplate: false
 head:
   - - meta
     - name: description
-      content: "AQBot एक free open-source AI desktop client है जिसमें multi-model chat, Agent, MCP, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo import, local RAG, S3/WebDAV backup और built-in AI gateway है।"
+      content: "AQBot एक free open-source AI desktop client है जिसमें multi-model chat, roles, Agent, MCP, Skills Management, Exa search, ChatGPT/Cherry Studio/Kelivo import, local knowledge bases, S3/WebDAV backups और built-in AI gateway शामिल हैं।"
 
 hero:
   name: AQBot
   text: "आपका AI desktop workspace"
-  tagline: "Multi-model chat, Agent, MCP tools, Skills Management, Exa search, API gateway, imports, knowledge base और backups एक local-first client में"
+  tagline: "Multi-model chat, Roles, Agent, MCP tools, Skills Management, Exa search, API gateway, imports, knowledge base और backups एक local-first client में"
   image:
     src: /logo.png
     alt: AQBot
@@ -36,6 +36,9 @@ features:
   - icon: thunderbolt
     title: "AI Agent"
     details: "File edits, commands और code analysis with permission levels, working-directory sandboxing, approval UI और cost tracking।"
+  - icon: book
+    title: "Roles"
+    details: "Prompts, avatars, opening messages, starter questions, temperature और Top P save करें, फिर prompts.chat/PlexPt 中文 से roles install करें।"
   - icon: edit
     title: "Rich rendering"
     details: "Markdown, LaTeX, Mermaid, D2, Monaco code blocks, HTML fragments और Artifact previews।"
