@@ -82,7 +82,7 @@ jobs:
           # macOS
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
           # Windows
           - os: windows-latest
@@ -121,13 +121,19 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - name: Install x86_64 OpenSSL (macOS Intel cross-compile)
+      - name: Install x86_64 OpenSSL (macOS Intel)
         if: matrix.target == 'x86_64-apple-darwin'
         run: |
-          arch -x86_64 brew install openssl@3
-          echo "OPENSSL_DIR=$(arch -x86_64 brew --prefix openssl@3)" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=$(arch -x86_64 brew --prefix openssl@3)/include" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=$(arch -x86_64 brew --prefix openssl@3)/lib" >> $GITHUB_ENV
+          ARCH=$(uname -m)
+          if [[ "$ARCH" != "x86_64" ]]; then
+            echo "Expected x86_64 runner, got $ARCH"
+            exit 1
+          fi
+          brew install openssl@3
+          OPENSSL_PREFIX=$(brew --prefix openssl@3)
+          echo "OPENSSL_DIR=$OPENSSL_PREFIX" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$OPENSSL_PREFIX/include" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$OPENSSL_PREFIX/lib" >> $GITHUB_ENV
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
@@ -185,7 +191,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ matrix.os == 'macos-latest' && '-' || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ contains(matrix.target, 'apple-darwin') && '-' || '' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'AQBot ${{ github.ref_name }}'
