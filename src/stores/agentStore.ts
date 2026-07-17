@@ -386,8 +386,10 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       if (execId) {
         updates[execId] = updated;
       }
+      const { [event.conversationId]: _removedStatus, ...agentStatus } = s.agentStatus;
       return withAgentCacheLimits(s, event.conversationId, {
         toolCalls: { ...s.toolCalls, ...updates },
+        agentStatus,
       });
     });
   },

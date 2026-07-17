@@ -1631,18 +1631,25 @@ pub async fn agent_query(
                 } => {
                     let (safe_tool_use_id, safe_tool_name) =
                         filter_agent_tool_identity(&tool_use_id, &tool_name);
-                    let _ = app.emit(
+                    if let Err(error) = app.emit(
                         "agent-tool-output",
                         AgentToolOutputPayload {
                             conversation_id: conv_id.clone(),
                             assistant_message_id: current_assistant_msg_id
                                 .clone()
                                 .unwrap_or_default(),
-                            tool_use_id: safe_tool_use_id,
+                            tool_use_id: safe_tool_use_id.clone(),
                             tool_name: safe_tool_name,
                             content: filter_complete_agent_event_text(&content),
                         },
-                    );
+                    ) {
+                        tracing::warn!(
+                            conversation_id = %conv_id,
+                            tool_use_id = %safe_tool_use_id,
+                            %error,
+                            "failed to emit agent tool output"
+                        );
+                    }
                 }
                 _ => {
                     tracing::debug!("[agent] unhandled SDKMessage: {:?}", msg);
