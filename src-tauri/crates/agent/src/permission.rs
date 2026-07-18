@@ -66,6 +66,7 @@ pub fn classify_tool_risk(tool_name: &str) -> RiskLevel {
             | "move"
             | "mkdir"
             | "remove"
+            | "skillmanager"
     ) || name_lower.contains("write")
         || name_lower.contains("edit")
         || name_lower.contains("create")
