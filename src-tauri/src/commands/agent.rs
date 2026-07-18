@@ -1024,7 +1024,10 @@ pub async fn agent_query(
     };
     let skill_registry = Arc::new(tokio::sync::RwLock::new(registry));
     let skill_tool: Arc<dyn open_agent_sdk::types::Tool> = Arc::new(
-        open_agent_sdk::tools::skill_tool::SkillTool::new(skill_registry),
+        open_agent_sdk::tools::skill_tool::SkillTool::new(skill_registry.clone()),
+    );
+    let skill_manager: Arc<dyn open_agent_sdk::types::Tool> = Arc::new(
+        open_agent_sdk::tools::skill_manager::SkillManager::new(home.clone(), skill_registry),
     );
 
     // Build ask_fn for AskUserQuestion tool
@@ -1084,7 +1087,7 @@ pub async fn agent_query(
         skills_summary,
         ask_fn: Some(ask_fn),
         can_use_tool: Some(can_use_tool),
-        custom_tools: vec![skill_tool],
+        custom_tools: vec![skill_tool, skill_manager],
         abort_signal: Some(cancel_token.clone()),
         shell_binary: global_settings.agent_bash_path.clone(),
         ..Default::default()
