@@ -12,6 +12,7 @@ use crate::native::{
     openai_responses,
 };
 use crate::realtime::realtime_handler;
+use crate::sessions::sessions_handler;
 use crate::server::GatewayAppState;
 
 pub fn create_router(state: GatewayAppState) -> Router {
@@ -40,7 +41,8 @@ pub fn create_router(state: GatewayAppState) -> Router {
     // Public routes (auth handled internally for realtime)
     let public = Router::new()
         .route("/health", get(health_check))
-        .route("/v1/realtime", get(realtime_handler));
+        .route("/v1/realtime", get(realtime_handler))
+        .route("/v1/sessions", get(sessions_handler));
 
     Router::new()
         .merge(protected)
@@ -63,6 +65,8 @@ mod tests {
         GatewayAppState {
             db,
             master_key: [7u8; 32],
+            session_registry: Arc::new(crate::session_registry::SessionRegistry::new()),
+            this_device_id: "test-device".into(),
         }
     }
 

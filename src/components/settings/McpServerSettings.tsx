@@ -28,6 +28,7 @@ import type { McpServer, CreateMcpServerInput, ToolDescriptor } from '@/types';
 const BUILTIN_DISPLAY_NAME_KEYS: Record<string, string> = {
   '@aqbot/fetch': 'settings.mcpServers.builtinFetch',
   '@aqbot/search-file': 'settings.mcpServers.builtinSearchFile',
+  '@aqbot/session-connect': 'settings.mcpServers.builtinSessionConnect',
 };
 
 function normalizeImportTransport(cfg: Record<string, unknown>): 'stdio' | 'http' | 'sse' | null {

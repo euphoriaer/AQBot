@@ -3,5 +3,8 @@ pub mod handlers;
 pub mod middleware;
 pub mod native;
 pub mod realtime;
+pub mod remote_peer;
 pub mod routes;
 pub mod server;
+pub mod session_registry;
+pub mod sessions;

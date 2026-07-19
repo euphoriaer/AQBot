@@ -15,12 +15,15 @@ use sea_orm::DatabaseConnection;
 use tokio::task::JoinHandle;
 
 use aqbot_core::error::{AQBotError, Result};
+use crate::session_registry::SessionRegistry;
 
 /// Shared state for Axum handlers (separate from Tauri AppState).
 #[derive(Clone)]
 pub struct GatewayAppState {
     pub db: DatabaseConnection,
     pub master_key: [u8; 32],
+    pub session_registry: Arc<SessionRegistry>,
+    pub this_device_id: String,
 }
 
 /// TLS certificate material.
@@ -49,7 +52,7 @@ pub struct GatewayStartConfig {
     pub force_ssl: bool,
 }
 
-// ─── SSL redirect handler ─────────────────────────────────────────────────
+//  SSL redirect handler 
 
 #[derive(Clone)]
 struct RedirectState {
@@ -68,7 +71,7 @@ async fn ssl_redirect_handler(
 
     // Strip any existing port from the Host header, handling bracketed IPv6.
     let bare_host = if host_header.starts_with('[') {
-        // Bracketed IPv6: "[::1]:port" → "[::1]", or "[::1]" → "[::1]".
+        // Bracketed IPv6: "[::1]:port" ?"[::1]", or "[::1]" ?"[::1]".
         match host_header.find("]:") {
             Some(pos) => &host_header[..pos + 1],
             None => host_header,
@@ -104,7 +107,7 @@ fn create_redirect_router(https_port: u16) -> Router {
         .with_state(RedirectState { https_port })
 }
 
-// ─── GatewayServer ────────────────────────────────────────────────────────
+//  GatewayServer 
 
 pub struct GatewayServer {
     http_handle: Handle,
@@ -123,13 +126,17 @@ impl GatewayServer {
         pool: DatabaseConnection,
         master_key: [u8; 32],
         config: GatewayStartConfig,
+        session_registry: Arc<SessionRegistry>,
+        this_device_id: String,
     ) -> Result<Self> {
         let app_state = GatewayAppState {
             db: pool,
             master_key,
+            session_registry,
+            this_device_id,
         };
 
-        // ── Bind HTTP listener ──────────────────────────────────────────
+        //  Bind HTTP listener 
         let http_bind: SocketAddr = format!("{}:{}", config.listen_address, config.http_port)
             .parse()
             .map_err(|e| AQBotError::Gateway(format!("Invalid HTTP bind address: {}", e)))?;
@@ -142,7 +149,7 @@ impl GatewayServer {
             .local_addr()
             .map_err(|e| AQBotError::Gateway(format!("Failed to get HTTP local addr: {}", e)))?;
 
-        // ── Optionally bind HTTPS listener and load TLS config ──────────
+        //  Optionally bind HTTPS listener and load TLS config 
         struct HttpsBinding {
             listener: std::net::TcpListener,
             rustls: RustlsConfig,
@@ -182,7 +189,7 @@ impl GatewayServer {
 
         let https_actual_addr = https_binding.as_ref().map(|b| b.addr);
 
-        // ── Build router(s) ─────────────────────────────────────────────
+        //  Build router(s) 
         // HTTP router: redirect (force_ssl) or full gateway.
         // HTTPS router: always the full gateway when SSL is configured.
         let http_router: Router = if config.force_ssl && https_actual_addr.is_some() {
@@ -196,7 +203,7 @@ impl GatewayServer {
             None
         };
 
-        // ── Spawn HTTP task ─────────────────────────────────────────────
+        //  Spawn HTTP task 
         // Pre-create the HTTPS Handle (when HTTPS will be active) before
         // spawning the HTTP task so that each task holds a clone of its
         // sibling's handle for mutual-shutdown: if one listener exits
@@ -233,7 +240,7 @@ impl GatewayServer {
             })
         };
 
-        // ── Spawn HTTPS task (when SSL is configured) ───────────────────
+        //  Spawn HTTPS task (when SSL is configured) 
         let https_task = match (https_binding, https_router) {
             (Some(binding), Some(router)) => {
                 // Reuse the pre-created handle so the HTTP task already

@@ -122,3 +122,27 @@ export interface ToolCallState {
   output?: string;
   isError?: boolean;
 }
+
+// ── Session interop types ─────────────────────────────────────────────
+
+export interface SessionInfo {
+  address: string;
+  device_id: string;
+  conversation_id: string;
+  lock_held: boolean;
+  registered_at: number;
+  is_active: boolean;
+  title?: string | null;
+}
+
+export interface SessionInputReceivedEvent {
+  conversation_id: string;
+  source_address: string;
+  content: string;
+}
+
+export interface SessionOutputReceivedEvent {
+  target_conversation_id: string;
+  source_address: string;
+  text: string;
+}

@@ -1,4 +1,5 @@
 use aqbot_core::db;
+use aqbot_gateway::session_registry::SessionRegistry;
 use chrono;
 use sea_orm::DatabaseConnection;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,6 +43,8 @@ pub struct AppState {
         Arc<Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
     pub agent_always_allowed:
         Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
+    pub session_registry: Arc<SessionRegistry>,
+    pub this_device_id: String,
 }
 
 mod commands;
@@ -474,6 +477,16 @@ pub fn run() {
         commands::agent::agent_respond_ask,
         commands::agent::agent_backup_and_clear_sdk_context,
         commands::agent::agent_restore_sdk_context_from_backup,
+        // agent session interop
+        commands::agent::agent_session_connect,
+        commands::agent::agent_session_disconnect,
+        commands::agent::agent_session_get_connections,
+        commands::agent::agent_session_list,
+        commands::agent::agent_session_send_input,
+        commands::agent::agent_session_acquire_lock,
+        commands::agent::agent_session_release_lock,
+        commands::agent::get_device_id,
+        commands::agent::get_local_ip,
         // skills
         commands::skills::list_skills,
         commands::skills::get_skill,
@@ -745,6 +758,25 @@ pub fn run() {
 
             let tray_language = app_settings.language.clone();
 
+            // Load or generate this device's unique ID for session addressing
+            let device_id_path = app_dir.join("device_id");
+            let this_device_id = if device_id_path.exists() {
+                std::fs::read_to_string(&device_id_path)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|_| {
+                        let id = uuid::Uuid::new_v4().to_string();
+                        let _ = std::fs::write(&device_id_path, &id);
+                        id
+                    })
+            } else {
+                let id = uuid::Uuid::new_v4().to_string();
+                let _ = std::fs::write(&device_id_path, &id);
+                id
+            };
+            tracing::info!(device_id = %this_device_id, "AQBot device ID loaded");
+
+            let session_registry = Arc::new(SessionRegistry::new());
+
             app.manage(AppState {
                 sea_db: db_handle.conn,
                 master_key,
@@ -768,7 +800,26 @@ pub fn run() {
                 agent_permission_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 agent_ask_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 agent_always_allowed: Arc::new(Mutex::new(std::collections::HashMap::new())),
+                session_registry: session_registry.clone(),
+                this_device_id: this_device_id.clone(),
             });
+
+            // Initialize gateway address on session registry so session
+            // addresses are shown in `host:port/conversation_id` format.
+            {
+                let sea_db = app.state::<AppState>().sea_db.clone();
+                let sr = session_registry.clone();
+                rt.spawn(async move {
+                    if let Ok(settings) = aqbot_core::repo::settings::get_settings(&sea_db).await {
+                        let host = match settings.gateway_listen_address.trim() {
+                            "0.0.0.0" => "127.0.0.1",
+                            "::" | "[::]" => "localhost",
+                            other => other,
+                        };
+                        sr.set_gateway_address(host, settings.gateway_port).await;
+                    }
+                });
+            }
 
             // Reset any agent sessions that were running when app crashed/closed
             {

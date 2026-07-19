@@ -10,6 +10,7 @@ use crate::utils::gen_id;
 
 const BUILTIN_FETCH_ID: &str = "builtin-fetch";
 const BUILTIN_SEARCH_FILE_ID: &str = "builtin-search-file";
+const BUILTIN_SESSION_CONNECT_ID: &str = "builtin-session-connect";
 
 struct BuiltinDef {
     id: &'static str,
@@ -27,6 +28,11 @@ const BUILTIN_DEFS: &[BuiltinDef] = &[
         id: BUILTIN_SEARCH_FILE_ID,
         name: "@aqbot/search-file",
         default_enabled: false,
+    },
+    BuiltinDef {
+        id: BUILTIN_SESSION_CONNECT_ID,
+        name: "@aqbot/session-connect",
+        default_enabled: true,
     },
 ];
 
@@ -381,6 +387,50 @@ fn builtin_tools(server_id: &str, server_name: &str) -> Vec<ToolDescriptor> {
                 name: "search_files".into(),
                 description: Some("Search for files matching a pattern".into()),
                 input_schema_json: Some(r#"{"type":"object","properties":{"path":{"type":"string","description":"Base directory"},"pattern":{"type":"string","description":"Search pattern"}},"required":["path","pattern"]}"#.into()),
+            },
+        ],
+        "@aqbot/session-connect" => vec![
+            ToolDescriptor {
+                id: format!("{server_id}-session-list"),
+                server_id: server_id.to_string(),
+                name: "session_list".into(),
+                description: Some("List all registered sessions that can be connected to. Sessions include both local agent sessions and external gateway connections.".into()),
+                input_schema_json: Some(r#"{"type":"object","properties":{},"required":[]}"#.into()),
+            },
+            ToolDescriptor {
+                id: format!("{server_id}-session-connect"),
+                server_id: server_id.to_string(),
+                name: "session_connect".into(),
+                description: Some("Connect to a target session for input forwarding. Validates the session exists.".into()),
+                input_schema_json: Some(r#"{"type":"object","properties":{"conversation_id":{"type":"string","description":"Your conversation ID as source"},"target_address":{"type":"string","description":"Target session address in format device_id/conversation_id"}},"required":["conversation_id","target_address"]}"#.into()),
+            },
+            ToolDescriptor {
+                id: format!("{server_id}-session-disconnect"),
+                server_id: server_id.to_string(),
+                name: "session_disconnect".into(),
+                description: Some("Disconnect from a target session and release the input lock if held".into()),
+                input_schema_json: Some(r#"{"type":"object","properties":{"conversation_id":{"type":"string","description":"Your conversation ID"},"target_address":{"type":"string","description":"Target session address"}},"required":["conversation_id","target_address"]}"#.into()),
+            },
+            ToolDescriptor {
+                id: format!("{server_id}-session-acquire-lock"),
+                server_id: server_id.to_string(),
+                name: "session_acquire_lock".into(),
+                description: Some("Acquire the input lock on a target session. You must hold the lock before sending input.".into()),
+                input_schema_json: Some(r#"{"type":"object","properties":{"conversation_id":{"type":"string","description":"Your conversation ID"},"target_address":{"type":"string","description":"Target session address in format device_id/conversation_id"}},"required":["conversation_id","target_address"]}"#.into()),
+            },
+            ToolDescriptor {
+                id: format!("{server_id}-session-release-lock"),
+                server_id: server_id.to_string(),
+                name: "session_release_lock".into(),
+                description: Some("Release the input lock on a target session".into()),
+                input_schema_json: Some(r#"{"type":"object","properties":{"conversation_id":{"type":"string","description":"Your conversation ID"},"target_address":{"type":"string","description":"Target session address"}},"required":["conversation_id","target_address"]}"#.into()),
+            },
+            ToolDescriptor {
+                id: format!("{server_id}-session-send-input"),
+                server_id: server_id.to_string(),
+                name: "session_send_input".into(),
+                description: Some("Send input text to a target session. You must hold the input lock (acquire_lock) first.".into()),
+                input_schema_json: Some(r#"{"type":"object","properties":{"conversation_id":{"type":"string","description":"Your conversation ID as source"},"target_address":{"type":"string","description":"Target session address"},"content":{"type":"string","description":"The input text to send"}},"required":["conversation_id","target_address","content"]}"#.into()),
             },
         ],
         _ => vec![],

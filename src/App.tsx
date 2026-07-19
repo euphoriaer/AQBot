@@ -87,10 +87,18 @@ function AppInner() {
   // Global stream event listeners — persist across page navigation
   const startStreamListening = useConversationStore((s) => s.startStreamListening);
   const stopStreamListening = useConversationStore((s) => s.stopStreamListening);
+  const startSessionInterop = useConversationStore((s) => s.startSessionInteropListener);
+  const stopSessionInterop = useConversationStore((s) => s.stopSessionInteropListener);
   useEffect(() => {
     startStreamListening();
     return () => stopStreamListening();
   }, [startStreamListening, stopStreamListening]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    startSessionInterop();
+    return () => stopSessionInterop();
+  }, [startSessionInterop, stopSessionInterop]);
 
   useEffect(() => setupAgentEventListeners(), []);
 

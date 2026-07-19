@@ -510,17 +510,27 @@ pub async fn start_gateway(state: State<'_, AppState>) -> Result<(), String> {
         None
     };
 
+    let listen_addr = settings.listen_address.clone();
     let start_config = aqbot_gateway::server::GatewayStartConfig {
-        listen_address: settings.listen_address,
+        listen_address: listen_addr,
         http_port: settings.port,
         ssl: ssl_config,
         force_ssl: settings.force_ssl,
     };
 
+    // Update session registry's gateway address so session list shows
+    // addresses in host:port/conversation_id format.
+    {
+        let host = gateway_client_host(&settings.listen_address);
+        state.session_registry.set_gateway_address(&host, settings.port).await;
+    }
+
     let server = aqbot_gateway::server::GatewayServer::start(
         state.sea_db.clone(),
         state.master_key,
         start_config,
+        state.session_registry.clone(),
+        state.this_device_id.clone(),
     )
     .await
     .map_err(|e| e.to_string())?;

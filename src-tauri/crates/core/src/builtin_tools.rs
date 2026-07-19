@@ -54,6 +54,15 @@ pub async fn dispatch(server_name: &str, tool_name: &str, args: Value) -> Result
                 tool_name
             ))),
         },
+        "@aqbot/session-connect" => {
+            // Session-connect is intercepted and handled at the Tauri layer
+            // (conversations.rs) which has access to SessionRegistry.
+            // This fallback should not normally be reached.
+            Err(AQBotError::Gateway(format!(
+                "Session-connect tool '{}' must be handled by the Tauri layer",
+                tool_name
+            )))
+        }
         _ => Err(AQBotError::Gateway(format!(
             "Unknown builtin server: {}",
             server_name

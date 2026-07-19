@@ -22,3 +22,4 @@ export { useSkillStore } from './skillStore';
 export { useRoleStore } from './roleStore';
 export { useDrawingStore } from './drawingStore';
 export { useDrawingSettingsStore } from './drawingSettingsStore';
+export { useSessionInteropStore } from './sessionInteropStore';

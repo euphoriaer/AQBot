@@ -48,9 +48,15 @@ import type {
   AgentErrorEvent,
   AgentStreamTextEvent,
   AgentStreamThinkingEvent,
+  SessionInputReceivedEvent,
+  SessionOutputReceivedEvent,
 } from '@/types';
 
 let _unlisten: UnlistenFn | null = null;
+let _sessionInteropUnlisten: UnlistenFn | null = null;
+let _sessionOutputUnlisten: UnlistenFn | null = null;
+let _sessionAutoStartUnlisten: UnlistenFn | null = null;
+let _sessionCancelUnlisten: UnlistenFn | null = null;
 // Generation counter to prevent stale listeners from processing events
 // (fixes React StrictMode double-effect causing duplicate stream processing)
 let _listenerGen = 0;
@@ -1363,6 +1369,16 @@ interface ConversationState {
   /** Pending prompt text from welcome cards — InputArea picks it up and sends with companion awareness */
   pendingPromptText: string | null;
   setPendingPromptText: (text: string | null) => void;
+  /** Start listening for session-input-received events (cross-session interop) */
+  startSessionInteropListener: () => Promise<void>;
+  /** Stop listening for session interop events */
+  stopSessionInteropListener: () => void;
+  /** Whether the current session is receiving input from a remote session */
+  remoteInputActive: boolean;
+  /** The source address of the remote input currently being processed */
+  remoteInputSource: string | null;
+  /** Accumulated real-time output streams from connected sessions, keyed by source address */
+  sessionOutputStreams: Record<string, string>;
 }
 
 function appendStreamChunk(
@@ -1622,6 +1638,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   multiModelDoneMessageIds: [],
   pendingPromptText: null,
   setPendingPromptText: (text) => set({ pendingPromptText: text }),
+  remoteInputActive: false,
+  remoteInputSource: null,
+  sessionOutputStreams: {},
   searchEnabled: false,
   searchProviderId: null,
   enabledMcpServerIds: [],
@@ -4155,6 +4174,93 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (_unlisten) {
       _unlisten();
       _unlisten = null;
+    }
+  },
+
+  startSessionInteropListener: async () => {
+    if (_sessionInteropUnlisten) return;
+
+    _sessionInteropUnlisten = await listen<SessionInputReceivedEvent>(
+      'session-input-received',
+      (event) => {
+        const { conversation_id, source_address, content } = event.payload;
+        const state = get();
+        // Only auto-process if this is the active conversation
+        if (state.activeConversationId === conversation_id && !state.streaming) {
+          set({ remoteInputActive: true, remoteInputSource: source_address });
+          get().sendAgentMessage(content).finally(() => {
+            set({ remoteInputActive: false, remoteInputSource: null });
+          });
+        }
+      },
+    );
+
+    if (!_sessionOutputUnlisten) {
+      _sessionOutputUnlisten = await listen<SessionOutputReceivedEvent>(
+        'session-output-received',
+        (event) => {
+          const { target_conversation_id, source_address, text } = event.payload;
+          const state = get();
+          if (state.activeConversationId === target_conversation_id) {
+            set((s) => ({
+              sessionOutputStreams: {
+                ...s.sessionOutputStreams,
+                [source_address]: (s.sessionOutputStreams[source_address] ?? '') + text,
+              },
+            }));
+          }
+        },
+      );
+    }
+
+    if (!_sessionAutoStartUnlisten) {
+      _sessionAutoStartUnlisten = await listen<{ conversation_id: string; content: string; provider_id: string; model_id: string }>(
+        'session-auto-start',
+        (event) => {
+          const { conversation_id, content, provider_id, model_id } = event.payload;
+          // Auto-start the target conversation regardless of whether it's active
+          invoke('agent_query', {
+            conversationId: conversation_id,
+            prompt: content || ' ',
+            providerId: provider_id,
+            modelId: model_id,
+          }).catch((e) => {
+            // Agent already running or other error is acceptable
+            console.debug('[session-auto-start]', e);
+          });
+        },
+      );
+    }
+
+    if (!_sessionCancelUnlisten) {
+      _sessionCancelUnlisten = await listen<{ conversation_id: string }>(
+        'session-cancel',
+        (event) => {
+          const { conversation_id } = event.payload;
+          invoke('agent_cancel', { conversationId: conversation_id }).catch((e) => {
+            console.debug('[session-cancel]', e);
+          });
+        },
+      );
+    }
+  },
+
+  stopSessionInteropListener: () => {
+    if (_sessionInteropUnlisten) {
+      _sessionInteropUnlisten();
+      _sessionInteropUnlisten = null;
+    }
+    if (_sessionOutputUnlisten) {
+      _sessionOutputUnlisten();
+      _sessionOutputUnlisten = null;
+    }
+    if (_sessionAutoStartUnlisten) {
+      _sessionAutoStartUnlisten();
+      _sessionAutoStartUnlisten = null;
+    }
+    if (_sessionCancelUnlisten) {
+      _sessionCancelUnlisten();
+      _sessionCancelUnlisten = null;
     }
   },
 

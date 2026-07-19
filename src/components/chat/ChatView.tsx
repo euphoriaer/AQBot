@@ -2,7 +2,7 @@ import React, { useMemo, useCallback, useRef, useState, useEffect, useSyncExtern
 import { CloseCircleFilled, SyncOutlined } from '@ant-design/icons';
 import { Typography, Button, Dropdown, Input, App, Avatar, Alert, Popconfirm, Popover, theme, Tag, Image, Tooltip, Modal, Spin } from 'antd';
 import type { InputRef } from 'antd';
-import { Pencil, Share2, FileImage, FileCode, FileText, FileType, Bot, Brain, Lightbulb, Code, Languages, Copy, Check, RotateCcw, User, Trash2, ChevronLeft, ChevronRight, ChevronDown, Scissors, Paperclip, AlertCircle, X, ArrowDown, ArrowUp, ArrowLeftRight, Zap, Sparkles, TextCursorInput, GitBranch, ChartNoAxesColumn, MessageSquare, ArrowUpRight, ArrowDownRight, Coins, Clock, Timer, Download, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Pencil, Share2, FileImage, FileCode, FileText, FileType, Bot, Brain, Lightbulb, Code, Languages, Copy, Check, RotateCcw, User, Trash2, ChevronLeft, ChevronRight, ChevronDown, Scissors, Paperclip, AlertCircle, X, ArrowDown, ArrowUp, ArrowLeftRight, Zap, Sparkles, TextCursorInput, GitBranch, ChartNoAxesColumn, MessageSquare, ArrowUpRight, ArrowDownRight, Coins, Clock, Timer, Download, PanelLeftClose, PanelLeftOpen, Link2 } from 'lucide-react';
 import { ModelIcon } from '@lobehub/icons';
 import { getConvIcon } from '@/lib/convIcon';
 import { getRoleIntro } from '@/lib/roleIntro';
@@ -31,6 +31,7 @@ import {
 } from '@/stores';
 import { MAX_LOADED_MESSAGES } from '@/stores/conversationStore';
 import { useUserProfileStore, type AvatarType } from '@/stores/userProfileStore';
+import { useGatewayStore } from '@/stores/gatewayStore';
 import { useResolvedDarkMode } from '@/hooks/useResolvedDarkMode';
 import { InputArea } from './InputArea';
 import { ModelSelector } from './ModelSelector';
@@ -111,6 +112,8 @@ import { resolveAssistantMessageForBubbleKey } from './chatMessageLookup';
 import { ChatScrollIndicator } from './ChatScrollIndicator';
 import { ChatMinimap, MinimapScrollProvider } from './ChatMinimap';
 import { MultiModelDisplay, LayoutSwitcher, type MultiModelDisplayMode } from './MultiModelDisplay';
+import { SessionInteropPopoverContent } from './SessionInteropPopover';
+import { RippleOverlay } from './RippleOverlay';
 import { ConversationModelIcon } from './ConversationModelIcon';
 import PermissionCard from './PermissionCard';
 import AskUserCard from './AskUserCard';
@@ -2162,6 +2165,7 @@ export function ChatView() {
     && messages.some((message) => message.conversation_id !== activeConversationId),
   );
   const loadingOlder = useConversationStore((s) => s.loadingOlder);
+  const gatewayRunning = useGatewayStore((s) => s.status.is_running);
   const loadingNewer = useConversationStore((s) => s.loadingNewer);
   const hasOlderMessages = useConversationStore((s) => s.hasOlderMessages);
   const hasNewerMessages = useConversationStore((s) => s.hasNewerMessages);
@@ -2173,6 +2177,8 @@ export function ChatView() {
   const multiModelDoneMessageIds = useConversationStore((s) => s.multiModelDoneMessageIds);
   const thinkingActiveMessageIds = useConversationStore((s) => s.thinkingActiveMessageIds);
   const storeError = useConversationStore((s) => s.error);
+  const remoteInputActive = useConversationStore((s) => s.remoteInputActive);
+  const remoteInputSource = useConversationStore((s) => s.remoteInputSource);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const titleGeneratingConversationId = useConversationStore((s) => s.titleGeneratingConversationId);
   const regenerateTitle = useConversationStore((s) => s.regenerateTitle);
@@ -2435,6 +2441,10 @@ export function ChatView() {
       }
     }
   }, [activeConversationId]);
+
+  // ── Session interop popover state ─────────────────────────────────────
+  const [interopOpen, setInteropOpen] = useState(false);
+
   const messageAreaRef = useRef<HTMLDivElement>(null);
   const bubbleListRef = useRef<BubbleListRef | null>(null);
   const scrollBoxRef = useRef<HTMLElement | null>(null);
@@ -4638,6 +4648,17 @@ export function ChatView() {
                 <Button type="text" icon={<ChartNoAxesColumn size={14} />} size="small" />
               </Tooltip>
             </Popover>
+            <Popover
+              content={<SessionInteropPopoverContent activeConversationId={activeConversationId} />}
+              trigger="click"
+              open={interopOpen}
+              onOpenChange={setInteropOpen}
+              placement="bottomRight"
+            >
+              <Tooltip title={t('chat.sessionInterop.title')}>
+                <Button type="text" icon={<Link2 size={14} color={gatewayRunning ? token.colorSuccess : undefined} />} size="small" />
+              </Tooltip>
+            </Popover>
             <Dropdown menu={{ items: exportMenuItems }} trigger={['click']}>
               <Button type="text" icon={<Share2 size={14} />} size="small" />
             </Dropdown>
@@ -4659,6 +4680,7 @@ export function ChatView() {
         className={`flex-1 min-h-0 overflow-hidden relative bubble-${bubbleStyle || 'modern'}${userMessageAreaClass}${aiMessageAreaClass}`}
         style={messageAreaStyle}
       >
+        <RippleOverlay active={remoteInputActive} sourceAddress={remoteInputSource} />
         {messages.length === 0 ? (
           activeConversationId && loading ? (
             <div

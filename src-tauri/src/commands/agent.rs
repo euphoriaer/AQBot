@@ -16,13 +16,20 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
 use tauri::{Emitter, State};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 
 /// In-memory map of conversation IDs to actively running agent task IDs.
 /// Used as the source of truth for concurrency checks (more reliable than DB status).
 static RUNNING_AGENTS: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Channels for blocking send_input to receive output from target sessions.
+/// Keyed by the target's conversation_id.
+static SESSION_OUTPUT_CHANNELS: LazyLock<
+    Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<(String, String)>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const DEFAULT_AGENT_WORKSPACE_DATETIME_FORMAT: &str = "YYYY-MM-DD-HH-mm-ss";
 const MAX_AGENT_WORKSPACE_NAME_LEN: usize = 80;
@@ -685,6 +692,29 @@ fn ensure_agent_prompt_safe_for_persistence(prompt: &str) -> Result<(), String> 
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Broadcast a stream chunk to sessions connected via SessionOutputChannels.
+/// Used by the spawned agent task to forward output to connected sessions.
+fn broadcast_stream_chunk(
+    app: &tauri::AppHandle,
+    session_address: &aqbot_gateway::session_registry::SessionAddress,
+    text: &str,
+) {
+    let source_wire = session_address.to_wire();
+    let _ = app.emit(
+        "session-output-received",
+        serde_json::json!({
+            "target_conversation_id": &session_address.conversation_id,
+            "source_address": &source_wire,
+            "text": text,
+        }),
+    );
+    if let Ok(map) = SESSION_OUTPUT_CHANNELS.lock() {
+        if let Some(tx) = map.get(&session_address.conversation_id) {
+            let _ = tx.send((source_wire.clone(), text.to_string()));
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn agent_query(
     app: tauri::AppHandle,
@@ -1093,13 +1123,432 @@ pub async fn agent_query(
         },
     );
 
-    let agent_options = AgentOptions {
+
+    // Build connect_fn for SessionConnect tool
+    let session_registry_for_connect = state.session_registry.clone();
+    let this_device_id_for_connect = state.this_device_id.clone();
+    let conv_id_for_connect = conversation_id.clone();
+    let db_for_connect = state.sea_db.clone();
+    let app_for_connect = app.clone();
+
+    let connect_fn: open_agent_sdk::tools::session_connect::SessionConnectFn = Arc::new(
+        move |request: open_agent_sdk::tools::session_connect::SessionConnectRequest| {
+            let registry = session_registry_for_connect.clone();
+            let device_id = this_device_id_for_connect.clone();
+            let conv_id = conv_id_for_connect.clone();
+            let db = db_for_connect.clone();
+            let app = app_for_connect.clone();
+            Box::pin(async move {
+                let source = aqbot_gateway::session_registry::SessionAddress {
+                    device_id,
+                    conversation_id: conv_id,
+                };
+
+                // Helper: check if a device_id refers to the local gateway
+                // (needed because session list uses host:port format)
+                let is_local = async |target_dev_id: &str| -> bool {
+                    if let Some(gw) = registry.gateway_address().await {
+                        gw == target_dev_id
+                    } else {
+                        false
+                    }
+                };
+
+                match request.action.as_str() {
+                    "list" => {
+                        let sessions = match aqbot_core::repo::conversation::list_conversations(&db).await {
+                            Ok(convs) => {
+                                let pairs: Vec<(String, String)> = convs
+                                    .into_iter()
+                                    .map(|c| (c.id, c.title))
+                                    .collect();
+                                registry.list_with_db(&pairs, &source.device_id).await
+                            }
+                            Err(_) => registry.list().await,
+                        };
+                        let lines: Vec<String> = sessions
+                            .iter()
+                            .map(|s| {
+                                let status = if s.is_active { "" } else { " [inactive]" };
+                                let lock_info = if s.lock_held {
+                                    " [LOCKED]"
+                                } else {
+                                    ""
+                                };
+                                let title = s.title.as_deref().unwrap_or("");
+                                if title.is_empty() {
+                                    format!("  {}{}{}", s.address, status, lock_info)
+                                } else {
+                                    format!("  {} - {}{}{}", s.address, title, status, lock_info)
+                                }
+                            })
+                            .collect();
+                        if lines.is_empty() {
+                            Ok("No sessions available. You are the only active session.".into())
+                        } else {
+                            Ok(format!(
+                                "Available sessions:\n{}\n\nTo connect and send input to a session, use 'connect' first, then 'acquire_lock', then 'send_input'.",
+                                lines.join("\n")
+                            ))
+                        }
+                    }
+                    "connect" => {
+                        let target_str = request
+                            .target
+                            .ok_or("Missing 'target' for connect action".to_string())?;
+                        let target = aqbot_gateway::session_registry::SessionAddress::from_wire(
+                            &target_str,
+                        )
+                        .ok_or_else(|| {
+                            format!("Invalid target address: {target_str}")
+                        })?;
+                        registry
+                            .connect_sessions(&source, &target)
+                            .await;
+
+                        // Cross-device: auto-connect WebSocket relay
+                        if target.device_id != source.device_id && !is_local(&target.device_id).await {
+                            let cmd = serde_json::json!({
+                                "type": "session.connect",
+                                "conversation_id": &source.conversation_id,
+                            });
+                            let cmd_str = cmd.to_string();
+                            let already = aqbot_gateway::remote_peer::send_to_remote(
+                                &target.device_id, &cmd_str,
+                            ).await.map_err(|e| e.to_string())?;
+
+                            if !already {
+                                let ws_url = registry.get_device_peer(&target.device_id).await
+                                    .or_else(|| {
+                                        if target.device_id.contains(':') {
+                                            Some(format!("ws://{}/v1/sessions", target.device_id))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "Remote device '{}' has no known gateway address.                                              Make sure the remote device's Gateway is running                                              and accessible, then try again.",
+                                            target.device_id
+                                        )
+                                    })?;
+
+                                let reg = registry.clone();
+                                let remote_id = target.device_id.clone();
+                                let this_id = source.device_id.clone();
+                                let ws_url_clone = ws_url.clone();
+                                tokio::spawn(async move {
+                                    let _ = aqbot_gateway::remote_peer::connect_remote_peer(
+                                        remote_id, ws_url_clone, reg, this_id,
+                                    ).await;
+                                });
+
+                                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                                let sent2 = aqbot_gateway::remote_peer::send_to_remote(
+                                    &target.device_id, &cmd_str,
+                                ).await.map_err(|e| e.to_string())?;
+                                if !sent2 {
+                                    return Err(format!(
+                                        "Connecting to remote device {} at {} failed. Make sure the remote gateway is running and accessible.",
+                                        target.device_id, ws_url
+                                    ));
+                                }
+                            }
+                        }
+
+                        Ok(format!(
+                            "Connected to session {target_str}."
+                        ))
+                    }
+                    "acquire_lock" => {
+                        let target_str = request
+                            .target
+                            .ok_or("Missing 'target' for acquire_lock action".to_string())?;
+                        let target = aqbot_gateway::session_registry::SessionAddress::from_wire(
+                            &target_str,
+                        )
+                        .ok_or_else(|| {
+                            format!("Invalid target address: {target_str}")
+                        })?;
+
+                        if target.device_id != source.device_id && !is_local(&target.device_id).await {
+                            let cmd = serde_json::json!({
+                                "type": "session.acquire_lock",
+                                "target": &target_str,
+                            });
+                            let sent = aqbot_gateway::remote_peer::send_to_remote(
+                                &target.device_id, &cmd.to_string(),
+                            ).await.map_err(|e| e.to_string())?;
+                            if !sent {
+                                return Err(format!("Not connected to remote device: {}", target.device_id));
+                            }
+                            return Ok(format!(
+                                "Input lock acquired on remote session {target_str}."
+                            ));
+                        }
+
+                        if registry.get(&target).await.is_some() {
+                            registry.acquire_lock(&target, &source).await.map_err(|e| e.to_string())?;
+                            Ok(format!("Input lock acquired on {target_str}."))
+                        } else {
+                            // Target not active: auto-start
+                            registry.connect_sessions(&source, &target).await;
+                            if let Ok(conv) = aqbot_core::repo::conversation::get_conversation(&db, &target.conversation_id).await {
+                                let _ = app.emit("session-auto-start", serde_json::json!({
+                                    "conversation_id": &target.conversation_id,
+                                    "content": "",
+                                    "provider_id": &conv.provider_id,
+                                    "model_id": &conv.model_id,
+                                }));
+                            }
+                            Ok(format!("Session {target_str} is being activated. Try acquire_lock again after the session starts."))
+                        }
+                    }
+                    "release_lock" => {
+                        let target_str = request
+                            .target
+                            .ok_or("Missing 'target' for release_lock action".to_string())?;
+                        let target = aqbot_gateway::session_registry::SessionAddress::from_wire(
+                            &target_str,
+                        )
+                        .ok_or_else(|| {
+                            format!("Invalid target address: {target_str}")
+                        })?;
+
+                        if target.device_id != source.device_id && !is_local(&target.device_id).await {
+                            let cmd = serde_json::json!({
+                                "type": "session.release_lock",
+                                "target": &target_str,
+                            });
+                            let _ = aqbot_gateway::remote_peer::send_to_remote(
+                                &target.device_id, &cmd.to_string(),
+                            ).await;
+                            return Ok(format!(
+                                "Input lock released on remote session {target_str}."
+                            ));
+                        }
+
+                        registry.release_lock(&target, &source).await;
+                        Ok(format!(
+                            "Input lock released on session {target_str}."
+                        ))
+                    }
+                    "send_input" => {
+                        let target_str = request
+                            .target
+                            .ok_or("Missing 'target' for send_input action".to_string())?;
+                        let content = request
+                            .content
+                            .ok_or("Missing 'content' for send_input action".to_string())?;
+                        let target = aqbot_gateway::session_registry::SessionAddress::from_wire(
+                            &target_str,
+                        )
+                        .ok_or_else(|| {
+                            format!("Invalid target address: {target_str}")
+                        })?;
+                        let source_wire = source.to_wire();
+
+                        if target.device_id != source.device_id && !is_local(&target.device_id).await {
+                            let cmd = serde_json::json!({
+                                "type": "session.input",
+                                "target": target_str,
+                                "content": &content,
+                            });
+                            let cmd_str = cmd.to_string();
+                            let sent = aqbot_gateway::remote_peer::send_to_remote(
+                                &target.device_id, &cmd_str,
+                            ).await.map_err(|e| e.to_string())?;
+                            if sent {
+                                return Ok(format!("Input sent to remote session {target_str}."));
+                            }
+                            let ws_url = registry.get_device_peer(&target.device_id).await
+                                .or_else(|| {
+                                    if target.device_id.contains(':') {
+                                        Some(format!("ws://{}/v1/sessions", target.device_id))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .ok_or_else(|| {
+                                    format!(
+                                        "Remote device '{}' has no known gateway address.                                          Make sure the remote device's Gateway is running                                          and accessible, then try again.",
+                                        target.device_id
+                                    )
+                                })?;
+                            let reg = registry.clone();
+                            let remote_id = target.device_id.clone();
+                            let this_id = source.device_id.clone();
+                            let ws_url_for_spawn = ws_url.clone();
+                            tokio::spawn(async move {
+                                let _ = aqbot_gateway::remote_peer::connect_remote_peer(
+                                    remote_id, ws_url_for_spawn, reg, this_id,
+                                ).await;
+                            });
+                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                            let connect_cmd = serde_json::json!({
+                                "type": "session.connect",
+                                "conversation_id": &source.conversation_id,
+                            });
+                            let _ = aqbot_gateway::remote_peer::send_to_remote(
+                                &target.device_id, &connect_cmd.to_string(),
+                            ).await;
+                            let lock_cmd = serde_json::json!({
+                                "type": "session.acquire_lock",
+                                "target": &target_str,
+                            });
+                            let _ = aqbot_gateway::remote_peer::send_to_remote(
+                                &target.device_id, &lock_cmd.to_string(),
+                            ).await;
+                            let sent2 = aqbot_gateway::remote_peer::send_to_remote(
+                                &target.device_id, &cmd_str,
+                            ).await.map_err(|e| e.to_string())?;
+                            if !sent2 {
+                                return Err(format!(
+                                    "Failed to connect to remote device {} at {}. Make sure the remote gateway is running.",
+                                    target.device_id, ws_url
+                                ));
+                            }
+                            return Ok(format!("Input sent to remote session {target_str}. (Remote sessions don't support blocking response wait yet)"));
+                        }
+
+                        if let Some(handle) = registry.get(&target).await {
+                            let lock = handle.input_lock_holder.read().await;
+                            if lock.as_ref() != Some(&source) {
+                                drop(lock);
+                                registry.acquire_lock(&target, &source).await.map_err(|e| e.to_string())?;
+                            } else {
+                                drop(lock);
+                            }
+                            // Register channel BEFORE sending (so broadcast is captured)
+                            let chan_key = target.conversation_id.clone();
+                            let (ch_tx, mut ch_rx) = tokio::sync::mpsc::unbounded_channel();
+                            { SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(chan_key.clone(), ch_tx); }
+
+                            handle.output_tx
+                                .send((source_wire.clone(), content.clone()))
+                                .await
+                                .map_err(|_| "Failed to send input to target session".to_string())?;
+
+                            // Block until output arrives (like Bash tool)
+                            let silence = Duration::from_secs(3);
+                            let max_wait = Duration::from_secs(120);
+                            let deadline = tokio::time::Instant::now() + max_wait;
+                            let mut lines: Vec<String> = Vec::new();
+                            let mut last = tokio::time::Instant::now();
+                            let mut has = false;
+                            loop {
+                                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                                if remaining.is_zero() { break; }
+                                let poll = Duration::from_millis(200);
+                                match tokio::time::timeout(poll.min(remaining), ch_rx.recv()).await {
+                                    Ok(Some((_, text))) => { lines.push(text); last = tokio::time::Instant::now(); has = true; }
+                                    _ => {}
+                                }
+                                if has && last.elapsed() > silence { break; }
+                            }
+                            SESSION_OUTPUT_CHANNELS.lock().unwrap().remove(&chan_key);
+                            if lines.is_empty() {
+                                Ok(format!("Input sent to {target_str}. No response received."))
+                            } else {
+                                Ok(format!("Response from {target_str}:\n{}", lines.join("")))
+                            }
+                        } else {
+                            // Target not active: auto-start via session-auto-start event
+                            registry.connect_sessions(&source, &target).await;
+                            // Register channel first
+                            let chan_key = target.conversation_id.clone();
+                            let (ch_tx, mut ch_rx) = tokio::sync::mpsc::unbounded_channel();
+                            { SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(chan_key.clone(), ch_tx); }
+
+                            if let Ok(conv) = aqbot_core::repo::conversation::get_conversation(&db, &target.conversation_id).await {
+                                let _ = app.emit("session-auto-start", serde_json::json!({
+                                    "conversation_id": &target.conversation_id,
+                                    "content": &content,
+                                    "provider_id": &conv.provider_id,
+                                    "model_id": &conv.model_id,
+                                }));
+                            }
+                            // Block until output arrives
+                            let silence = Duration::from_secs(3);
+                            let max_wait = Duration::from_secs(120);
+                            let deadline = tokio::time::Instant::now() + max_wait;
+                            let mut lines: Vec<String> = Vec::new();
+                            let mut last = tokio::time::Instant::now();
+                            let mut has = false;
+                            loop {
+                                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                                if remaining.is_zero() { break; }
+                                let poll = Duration::from_millis(200);
+                                match tokio::time::timeout(poll.min(remaining), ch_rx.recv()).await {
+                                    Ok(Some((_, text))) => { lines.push(text); last = tokio::time::Instant::now(); has = true; }
+                                    _ => {}
+                                }
+                                if has && last.elapsed() > silence { break; }
+                            }
+                            SESSION_OUTPUT_CHANNELS.lock().unwrap().remove(&chan_key);
+                            if lines.is_empty() {
+                                Ok(format!("Input sent to {target_str}. Target did not respond."))
+                            } else {
+                                Ok(format!("Response from {target_str}:\n{}", lines.join("")))
+                            }
+                        }
+                    }
+                    "cancel" => {
+                        let target_str = request.target
+                            .ok_or("Missing 'target' for cancel action".to_string())?;
+                        let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_str)
+                            .ok_or_else(|| format!("Invalid target address: {target_str}"))?;
+                        let app_emit = app.clone();
+                        tokio::spawn(async move {
+                            let _ = app_emit.emit("session-cancel", serde_json::json!({
+                                "conversation_id": &target.conversation_id,
+                            }));
+                        });
+                        Ok(format!("Cancel signal sent to {target_str}."))
+                    }
+                    "receive_output" => {
+                        let conv_id = source.conversation_id.clone();
+                        let (ch_tx, mut ch_rx) = tokio::sync::mpsc::unbounded_channel();
+                        let old = SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(conv_id.clone(), ch_tx);
+                        let mut lines = Vec::new();
+                        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                        while tokio::time::Instant::now() < deadline {
+                            match tokio::time::timeout(Duration::from_millis(500), ch_rx.recv()).await {
+                                Ok(Some((src, text))) => lines.push(format!("[From {}]: {}", src, text)),
+                                _ => break,
+                            }
+                        }
+                        if let Some(old_tx) = old {
+                            SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(conv_id.clone(), old_tx);
+                        } else {
+                            SESSION_OUTPUT_CHANNELS.lock().unwrap().remove(&conv_id);
+                        }
+                        if lines.is_empty() {
+                            Ok("No new output from connected sessions.".into())
+                        } else {
+                            Ok(lines.join("\n"))
+                        }
+                    }
+                    _ => Err(format!(
+                        "Unknown action: {}. Valid: list, connect, acquire_lock, release_lock, send_input, receive_output, cancel",
+                        request.action
+                    )),
+                }
+            })
+        },
+    );
+
+
+        
+
+        let agent_options = AgentOptions {
         model: Some(model_id.clone()),
         provider: Some(Arc::new(bridge)),
         cwd: session.cwd.clone(),
         system_prompt: conv.system_prompt.clone(),
         skills_summary,
         ask_fn: Some(ask_fn),
+        connect_fn: Some(connect_fn),
         can_use_tool: Some(can_use_tool),
         custom_tools: vec![skill_tool, skill_manager],
         abort_signal: Some(cancel_token.clone()),
@@ -1149,6 +1598,9 @@ pub async fn agent_query(
     let title_model_id = model_id.clone();
     let title_settings = global_settings.clone();
     let title_prompt = prompt.clone();
+    let session_registry = state.session_registry.clone();
+    let this_device_id = state.this_device_id.clone();
+    let session_title = pre_conv.title.clone();
 
     tokio::spawn(async move {
         // RAII guard: ensures conv_id is removed from RUNNING_AGENTS on exit (even panic)
@@ -1159,6 +1611,46 @@ pub async fn agent_query(
             "[agent] Background task started for conversation {}",
             conv_id
         );
+
+        // Register this agent in the session registry so other sessions
+        // (local or remote) can discover and send input to it.
+        let (session_output_tx, mut session_output_rx) = mpsc::channel::<(String, String)>(256);
+        let session_addr = aqbot_gateway::session_registry::SessionAddress {
+            device_id: this_device_id.clone(),
+            conversation_id: conv_id.clone(),
+        };
+        session_registry.register(session_addr.clone(), session_output_tx).await;
+        if !session_title.is_empty() {
+            session_registry.set_title(&session_addr, session_title).await;
+        }
+
+        // Receiver task: forwards incoming session input to the Tauri frontend
+        // via 'session-input-received' event. That event triggers
+        // sendAgentMessage() in the frontend, which calls agent_query() again.
+        let app_for_session = app.clone();
+        let conv_id_for_session = conv_id.clone();
+        let session_registry_for_cleanup = session_registry.clone();
+        let session_addr_for_cleanup = session_addr.clone();
+        tokio::spawn(async move {
+            while let Some((source, content)) = session_output_rx.recv().await {
+                let _ = app_for_session.emit("session-input-received", serde_json::json!({
+                    "conversation_id": &conv_id_for_session,
+                    "source_address": &source,
+                    "content": &content,
+                }));
+            }
+            // Channel closed – unregister and release locks
+            session_registry_for_cleanup.unregister(&session_addr_for_cleanup).await;
+            let sessions = session_registry_for_cleanup.list().await;
+            for s in &sessions {
+                let target_addr = aqbot_gateway::session_registry::SessionAddress {
+                    device_id: s.device_id.clone(),
+                    conversation_id: s.conversation_id.clone(),
+                };
+                session_registry_for_cleanup.release_lock(&target_addr, &session_addr_for_cleanup).await;
+            }
+        });
+
         let (mut rx, handle) = agent.query(&agent_prompt).await;
 
         let mut result_text = String::new();
@@ -1218,6 +1710,7 @@ pub async fn agent_query(
                                         &mut thinking_ipc_filter,
                                         thinking,
                                     ) {
+                                        broadcast_stream_chunk(&app, &session_addr, &thinking);
                                         let _ = app.emit(
                                             "agent-stream-thinking",
                                             AgentThinkingPayload {
@@ -1241,6 +1734,7 @@ pub async fn agent_query(
                                     if let Some(text) =
                                         filtered_agent_stream_chunk(&mut text_ipc_filter, text)
                                     {
+                                        broadcast_stream_chunk(&app, &session_addr, &text);
                                         let _ = app.emit(
                                             "agent-stream-text",
                                             AgentTextPayload {
@@ -1386,6 +1880,8 @@ pub async fn agent_query(
                     tracing::info!("[agent] ToolStart: {} ({})", tool_name, tool_use_id);
                     let (safe_tool_use_id, safe_tool_name) =
                         filter_agent_tool_identity(&tool_use_id, &tool_name);
+                    // Broadcast to connected sessions
+                    broadcast_stream_chunk(&app, &session_addr, &format!("[Tool: {}]\nInput: {}\n\n", safe_tool_name, input));
                     // Emit agent-tool-start
                     let _ = app.emit(
                         "agent-tool-start",
@@ -1416,6 +1912,8 @@ pub async fn agent_query(
                 } => {
                     let (safe_tool_use_id, safe_tool_name) =
                         filter_agent_tool_identity(&tool_use_id, &tool_name);
+                    // Broadcast to connected sessions
+                    broadcast_stream_chunk(&app, &session_addr, &format!("[Tool Result] {}: {}", safe_tool_name, filter_complete_agent_event_text(&content)));
                     // Emit agent-tool-result
                     let _ = app.emit(
                         "agent-tool-result",
@@ -1585,6 +2083,7 @@ pub async fn agent_query(
                     if let Some(thinking) =
                         filtered_agent_stream_chunk(&mut thinking_ipc_filter, &thinking)
                     {
+                        broadcast_stream_chunk(&app, &session_addr, &thinking);
                         let _ = app.emit(
                             "agent-stream-thinking",
                             AgentThinkingPayload {
@@ -1617,6 +2116,7 @@ pub async fn agent_query(
                     .unwrap_or_default();
 
                     if let Some(text) = filtered_agent_stream_chunk(&mut text_ipc_filter, &text) {
+                        broadcast_stream_chunk(&app, &session_addr, &text);
                         let _ = app.emit(
                             "agent-stream-text",
                             AgentTextPayload {
@@ -1634,6 +2134,8 @@ pub async fn agent_query(
                 } => {
                     let (safe_tool_use_id, safe_tool_name) =
                         filter_agent_tool_identity(&tool_use_id, &tool_name);
+                    // Broadcast bash/tool output to connected sessions
+                    broadcast_stream_chunk(&app, &session_addr, &format!("[{}] {}", safe_tool_name, content));
                     let _ = app.emit(
                         "agent-tool-output",
                         AgentToolOutputPayload {
@@ -2093,6 +2595,24 @@ pub async fn agent_cancel(
         running.remove(&conversation_id);
     }
 
+    // Unregister from session registry so other devices don't try to
+    // connect to a cancelled session. The receiver task will re-register
+    // if the session is restarted.
+    let addr = aqbot_gateway::session_registry::SessionAddress {
+        device_id: state.this_device_id.clone(),
+        conversation_id: conversation_id.clone(),
+    };
+    state.session_registry.unregister(&addr).await;
+    // Release any locks held by this session
+    let sessions = state.session_registry.list().await;
+    for s in &sessions {
+        let target = aqbot_gateway::session_registry::SessionAddress {
+            device_id: s.device_id.clone(),
+            conversation_id: s.conversation_id.clone(),
+        };
+        state.session_registry.release_lock(&target, &addr).await;
+    }
+
     Ok(())
 }
 
@@ -2181,6 +2701,216 @@ pub async fn agent_restore_sdk_context_from_backup(
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+// ── Session interop commands ──────────────────────────────────────────────
+
+/// Register a remote device peer (gateway URL) for cross-device session interop.
+#[tauri::command]
+pub async fn agent_session_register_peer(
+    state: State<'_, AppState>,
+    device_id: String,
+    gateway_url: String,
+) -> Result<(), String> {
+    state
+        .session_registry
+        .register_device_peer(device_id, gateway_url)
+        .await;
+    Ok(())
+}
+
+/// Connect a local session to a target session (same or remote device).
+#[tauri::command]
+pub async fn agent_session_connect(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    target_address: String,
+) -> Result<(), String> {
+    let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_address)
+        .ok_or_else(|| format!("Invalid target address: {}", target_address))?;
+    let source = aqbot_gateway::session_registry::SessionAddress {
+        device_id: state.this_device_id.clone(),
+        conversation_id,
+    };
+    state
+        .session_registry
+        .connect_sessions(&source, &target)
+        .await;
+    if target.device_id != state.this_device_id {
+        // For cross-device, start the remote peer relay if URL is known
+        if let Some(peer_url) = state.session_registry.get_device_peer(&target.device_id).await {
+            let registry = state.session_registry.clone();
+            let remote_id = target.device_id.clone();
+            let this_id = state.this_device_id.clone();
+            tokio::spawn(async move {
+                let _ = aqbot_gateway::remote_peer::connect_remote_peer(
+                    remote_id, peer_url, registry, this_id,
+                )
+                .await;
+            });
+        }
+    }
+    tracing::info!(target = %target_address, "Session connected");
+    Ok(())
+}
+
+/// Disconnect a local session from a target session.
+#[tauri::command]
+pub async fn agent_session_disconnect(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    target_address: String,
+) -> Result<(), String> {
+    let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_address)
+        .ok_or_else(|| format!("Invalid target address: {}", target_address))?;
+    let source = aqbot_gateway::session_registry::SessionAddress {
+        device_id: state.this_device_id.clone(),
+        conversation_id,
+    };
+    state.session_registry.release_lock(&target, &source).await;
+    state
+        .session_registry
+        .disconnect_sessions(&source, &target)
+        .await;
+    tracing::info!("Session disconnected from {}", target_address);
+    Ok(())
+}
+
+/// List all registered sessions (local + known remote).
+#[tauri::command]
+pub async fn agent_session_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<aqbot_gateway::session_registry::SessionInfo>, String> {
+    let convs = aqbot_core::repo::conversation::list_conversations(&state.sea_db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let pairs: Vec<(String, String)> = convs.into_iter().map(|c| (c.id, c.title)).collect();
+    Ok(state
+        .session_registry
+        .list_with_db(&pairs, &state.this_device_id)
+        .await)
+}
+
+/// Send input to a target session.
+#[tauri::command]
+pub async fn agent_session_send_input(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    target_address: String,
+    content: String,
+) -> Result<(), String> {
+    let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_address)
+        .ok_or_else(|| format!("Invalid target address: {}", target_address))?;
+    let source = aqbot_gateway::session_registry::SessionAddress {
+        device_id: state.this_device_id.clone(),
+        conversation_id,
+    };
+    if let Some(handle) = state.session_registry.get(&target).await {
+        let lock = handle.input_lock_holder.read().await;
+        if lock.as_ref() != Some(&source) {
+            return Err("You do not hold the input lock for this session".to_string());
+        }
+        drop(lock);
+        handle
+            .output_tx
+            .send((source.to_wire(), content))
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        return Err("Target session is not running".to_string());
+    }
+    Ok(())
+}
+
+/// Acquire the input lock on a target session.
+#[tauri::command]
+pub async fn agent_session_acquire_lock(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    target_address: String,
+) -> Result<(), String> {
+    let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_address)
+        .ok_or_else(|| format!("Invalid target address: {}", target_address))?;
+    let requester = aqbot_gateway::session_registry::SessionAddress {
+        device_id: state.this_device_id.clone(),
+        conversation_id,
+    };
+    state
+        .session_registry
+        .acquire_lock(&target, &requester)
+        .await
+}
+
+/// Release the input lock on a target session.
+#[tauri::command]
+pub async fn agent_session_release_lock(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    target_address: String,
+) -> Result<(), String> {
+    let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_address)
+        .ok_or_else(|| format!("Invalid target address: {}", target_address))?;
+    let holder = aqbot_gateway::session_registry::SessionAddress {
+        device_id: state.this_device_id.clone(),
+        conversation_id,
+    };
+    state
+        .session_registry
+        .release_lock(&target, &holder)
+        .await;
+    Ok(())
+}
+
+/// Get connected sessions info for a conversation.
+#[tauri::command]
+pub async fn agent_session_get_connections(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<Vec<aqbot_gateway::session_registry::SessionInfo>, String> {
+    let source = aqbot_gateway::session_registry::SessionAddress {
+        device_id: state.this_device_id.clone(),
+        conversation_id,
+    };
+    let conversations = aqbot_core::repo::conversation::list_conversations(&state.sea_db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let pairs: Vec<(String, String)> =
+        conversations.into_iter().map(|c| (c.id, c.title)).collect();
+    Ok(state
+        .session_registry
+        .get_connections_info(&source, &pairs, &state.this_device_id)
+        .await)
+}
+
+/// Return this device's unique ID.
+#[tauri::command]
+pub fn get_device_id(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.this_device_id.clone())
+}
+
+/// Get the first non-loopback IPv4 address and a random available port.
+#[tauri::command]
+pub fn get_local_ip() -> Result<serde_json::Value, String> {
+    let ip = get_first_local_ipv4().unwrap_or_else(|| "0.0.0.0".to_string());
+    let port = find_available_port().unwrap_or(8080);
+    Ok(serde_json::json!({ "ip": ip, "port": port }))
+}
+
+fn get_first_local_ipv4() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let local_addr = socket.local_addr().ok()?;
+    let ip = local_addr.ip();
+    if ip.is_loopback() || !ip.is_ipv4() {
+        return None;
+    }
+    Some(ip.to_string())
+}
+
+fn find_available_port() -> Option<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+    let port = listener.local_addr().ok()?.port();
+    Some(port)
 }
 
 #[cfg(test)]
