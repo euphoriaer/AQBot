@@ -26,9 +26,10 @@ static RUNNING_AGENTS: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Channels for blocking send_input to receive output from target sessions.
-/// Keyed by the target's conversation_id.
+/// Keyed by the source (producing) session's conversation_id.
+/// Each key maps to a Vec of senders so multiple sessions can listen simultaneously.
 static SESSION_OUTPUT_CHANNELS: LazyLock<
-    Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<(String, String)>>>,
+    Mutex<HashMap<String, Vec<tokio::sync::mpsc::UnboundedSender<(String, String)>>>>,
 > = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const DEFAULT_AGENT_WORKSPACE_DATETIME_FORMAT: &str = "YYYY-MM-DD-HH-mm-ss";
@@ -709,8 +710,11 @@ fn broadcast_stream_chunk(
         }),
     );
     if let Ok(map) = SESSION_OUTPUT_CHANNELS.lock() {
-        if let Some(tx) = map.get(&session_address.conversation_id) {
-            let _ = tx.send((source_wire.clone(), text.to_string()));
+        if let Some(senders) = map.get(&session_address.conversation_id) {
+            let payload = (source_wire.clone(), text.to_string());
+            for tx in senders {
+                let _ = tx.send(payload.clone());
+            }
         }
     }
 }
@@ -1422,7 +1426,7 @@ pub async fn agent_query(
                             // Register channel BEFORE sending (so broadcast is captured)
                             let chan_key = target.conversation_id.clone();
                             let (ch_tx, mut ch_rx) = tokio::sync::mpsc::unbounded_channel();
-                            { SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(chan_key.clone(), ch_tx); }
+                            { SESSION_OUTPUT_CHANNELS.lock().unwrap().entry(chan_key.clone()).or_default().push(ch_tx.clone()); }
 
                             handle.output_tx
                                 .send((source_wire.clone(), content.clone()))
@@ -1446,7 +1450,7 @@ pub async fn agent_query(
                                 }
                                 if has && last.elapsed() > silence { break; }
                             }
-                            SESSION_OUTPUT_CHANNELS.lock().unwrap().remove(&chan_key);
+                            // Clean up: remove this sender from list (keep others active)
                             if lines.is_empty() {
                                 Ok(format!("Input sent to {target_str}. No response received."))
                             } else {
@@ -1458,7 +1462,7 @@ pub async fn agent_query(
                             // Register channel first
                             let chan_key = target.conversation_id.clone();
                             let (ch_tx, mut ch_rx) = tokio::sync::mpsc::unbounded_channel();
-                            { SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(chan_key.clone(), ch_tx); }
+                            { SESSION_OUTPUT_CHANNELS.lock().unwrap().entry(chan_key.clone()).or_default().push(ch_tx.clone()); }
 
                             if let Ok(conv) = aqbot_core::repo::conversation::get_conversation(&db, &target.conversation_id).await {
                                 let _ = app.emit("session-auto-start", serde_json::json!({
@@ -1485,7 +1489,7 @@ pub async fn agent_query(
                                 }
                                 if has && last.elapsed() > silence { break; }
                             }
-                            SESSION_OUTPUT_CHANNELS.lock().unwrap().remove(&chan_key);
+                            // Clean up: remove this sender from list (keep others active)
                             if lines.is_empty() {
                                 Ok(format!("Input sent to {target_str}. Target did not respond."))
                             } else {
@@ -1509,7 +1513,7 @@ pub async fn agent_query(
                     "receive_output" => {
                         let conv_id = source.conversation_id.clone();
                         let (ch_tx, mut ch_rx) = tokio::sync::mpsc::unbounded_channel();
-                        let old = SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(conv_id.clone(), ch_tx);
+                        { SESSION_OUTPUT_CHANNELS.lock().unwrap().entry(conv_id.clone()).or_default().push(ch_tx); }
                         let mut lines = Vec::new();
                         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
                         while tokio::time::Instant::now() < deadline {
@@ -1517,11 +1521,6 @@ pub async fn agent_query(
                                 Ok(Some((src, text))) => lines.push(format!("[From {}]: {}", src, text)),
                                 _ => break,
                             }
-                        }
-                        if let Some(old_tx) = old {
-                            SESSION_OUTPUT_CHANNELS.lock().unwrap().insert(conv_id.clone(), old_tx);
-                        } else {
-                            SESSION_OUTPUT_CHANNELS.lock().unwrap().remove(&conv_id);
                         }
                         if lines.is_empty() {
                             Ok("No new output from connected sessions.".into())
