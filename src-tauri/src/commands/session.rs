@@ -1,0 +1,173 @@
+//! Tauri commands for the unified Session class.
+//!
+//! Phase 1: provides `session_enqueue_input`, `session_cancel_input`,
+//! `session_list_queue`, `session_cancel_active`. The `AgentInputRunner`
+//! wraps the existing `agent_query` so the Session queue can drive it.
+
+use crate::AppState;
+use aqbot_core::types::AttachmentInput;
+use aqbot_session::{
+    make_blocking_request, InputHandle, InputHandleInfo, InputRunner, InputRunContext,
+    InputSource, SessionManager,
+};
+use async_trait::async_trait;
+use serde::Deserialize;
+use std::sync::Arc;
+use tauri::{AppHandle, Manager, State};
+
+/// Adapter that lets the Session crate call into the existing agent_query
+/// logic. Holds an AppHandle so it can reach AppState via Tauri's state
+/// container.
+pub struct AgentInputRunner {
+    pub app: AppHandle,
+}
+
+#[async_trait]
+impl InputRunner for AgentInputRunner {
+    async fn run(&self, ctx: InputRunContext) -> Result<(), String> {
+        let app = self.app.clone();
+        let conversation_id = ctx.conversation_id.clone();
+        let prompt = ctx.content.clone();
+        let provider_id = ctx.provider_id.clone();
+        let model_id = ctx.model_id.clone();
+        let cancel_token = ctx.cancel_token.clone();
+
+        // Spawn the agent_query future in a task so we can race it against
+        // cancellation. agent_query internally checks RUNNING_AGENTS and
+        // returns "Agent is already running" if another query for the same
+        // conversation is in flight - but the Session's queue guarantees
+        // only one input runs at a time per conversation, so this check
+        // always passes here.
+        let query_app = app.clone();
+        let query_handle = tokio::spawn(async move {
+            let state = query_app.state::<AppState>();
+            let app_clone = query_app.clone();
+            crate::commands::agent::agent_query(
+                app_clone,
+                state,
+                conversation_id,
+                prompt,
+                provider_id,
+                model_id,
+                None,
+            )
+            .await
+        });
+
+        tokio::select! {
+            result = query_handle => {
+                match result {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(join_err) => Err(format!("Agent task panicked: {}", join_err)),
+                }
+            }
+            _ = cancel_token.cancelled() => {
+                // Best-effort cancel: fire agent_cancel which triggers the
+                // cancel token stored by agent_query in agent_cancel_tokens.
+                let cancel_app = app.clone();
+                let cancel_conv = ctx.conversation_id.clone();
+                tokio::spawn(async move {
+                    let state = cancel_app.state::<AppState>();
+                    let _ =
+                        crate::commands::agent::agent_cancel(state, cancel_conv).await;
+                })
+                .await
+                .ok();
+                Err("cancelled".to_string())
+            }
+        }
+    }
+}
+
+/// Serializable enqueue request for `session_enqueue_input`.
+#[derive(Debug, Deserialize)]
+pub struct EnqueueInputRequest {
+    pub conversation_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub attachments: Vec<AttachmentInput>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
+    /// True if this input is from a remote session peer. The Tauri layer uses
+    /// this to populate `InputSource`. For Phase 1, all inputs are local;
+    /// Phase 2 routes remote WS input directly here.
+    #[serde(default)]
+    pub remote: bool,
+    /// Optional remote source address (only meaningful if `remote=true`).
+    #[serde(default)]
+    pub remote_device_id: Option<String>,
+}
+
+/// Enqueue an input. Returns immediately with a handle; the input runs when
+/// the session's queue reaches it.
+#[tauri::command]
+pub async fn session_enqueue_input(
+    state: State<'_, AppState>,
+    request: EnqueueInputRequest,
+) -> Result<InputHandle, String> {
+    let manager = state.session_manager.clone();
+    let provider_id = request.provider_id.unwrap_or_default();
+    let model_id = request.model_id.unwrap_or_default();
+    let source = if request.remote {
+        InputSource::Remote {
+            from: aqbot_gateway::session_registry::SessionAddress {
+                device_id: request.remote_device_id.unwrap_or_default(),
+                conversation_id: request.conversation_id.clone(),
+            },
+        }
+    } else {
+        InputSource::Local
+    };
+    let (req, _rx) = make_blocking_request(
+        request.conversation_id,
+        request.content,
+        provider_id,
+        model_id,
+        source,
+    );
+    // Fire-and-forget enqueue. Callers that want to block on completion can
+    // use a future `session_wait_for_done(handle_id)` command (Phase 4).
+    let handle = manager.enqueue(req).await;
+    Ok(handle)
+}
+
+/// Cancel a queued or running input by handle_id. Returns true if found.
+#[tauri::command]
+pub async fn session_cancel_input(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    handle_id: String,
+) -> Result<bool, String> {
+    Ok(state
+        .session_manager
+        .cancel_input(&conversation_id, &handle_id)
+        .await)
+}
+
+/// Cancel the currently-running input for a conversation. Returns true if
+/// an active input was cancelled.
+#[tauri::command]
+pub async fn session_cancel_active(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<bool, String> {
+    Ok(state.session_manager.cancel_active(&conversation_id).await)
+}
+
+/// List the queue (running + queued) for a conversation.
+#[tauri::command]
+pub async fn session_list_queue(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<Vec<InputHandleInfo>, String> {
+    Ok(state.session_manager.list_queue(&conversation_id).await)
+}
+
+/// Convenience constructor for AppState setup.
+pub fn new_manager(app: AppHandle) -> Arc<SessionManager> {
+    let runner: Arc<dyn InputRunner> = Arc::new(AgentInputRunner { app });
+    Arc::new(SessionManager::new(runner))
+}

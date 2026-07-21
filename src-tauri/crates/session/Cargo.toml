@@ -1,0 +1,16 @@
+[package]
+name = "aqbot-session"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+aqbot-core = { path = "../core" }
+aqbot-gateway = { path = "../gateway" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"

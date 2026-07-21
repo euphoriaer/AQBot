@@ -23,6 +23,7 @@ pub mod providers;
 pub mod roles;
 pub mod s3;
 pub mod search;
+pub mod session;
 pub mod settings;
 pub mod skills;
 pub mod storage;

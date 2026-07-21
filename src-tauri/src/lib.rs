@@ -1,5 +1,6 @@
 use aqbot_core::db;
 use aqbot_gateway::session_registry::SessionRegistry;
+use aqbot_session::SessionManager;
 use chrono;
 use sea_orm::DatabaseConnection;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,6 +46,7 @@ pub struct AppState {
     pub agent_always_allowed:
         Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
     pub session_registry: Arc<SessionRegistry>,
+    pub session_manager: Arc<SessionManager>,
     pub this_device_id: String,
 }
 
@@ -488,6 +490,11 @@ pub fn run() {
         commands::agent::agent_session_release_lock,
         commands::agent::get_device_id,
         commands::agent::get_local_ip,
+        // session (unified multi-input / multi-output)
+        commands::session::session_enqueue_input,
+        commands::session::session_cancel_input,
+        commands::session::session_cancel_active,
+        commands::session::session_list_queue,
         // skills
         commands::skills::list_skills,
         commands::skills::get_skill,
@@ -778,6 +785,8 @@ pub fn run() {
 
             let session_registry = Arc::new(SessionRegistry::new());
 
+            let session_manager = commands::session::new_manager(app.handle().clone());
+
             app.manage(AppState {
                 sea_db: db_handle.conn,
                 master_key,
@@ -802,6 +811,7 @@ pub fn run() {
                 agent_ask_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 agent_always_allowed: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 session_registry: session_registry.clone(),
+                session_manager,
                 this_device_id: this_device_id.clone(),
             });
 

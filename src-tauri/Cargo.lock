@@ -202,6 +202,7 @@ dependencies = [
  "aqbot-core",
  "aqbot-gateway",
  "aqbot-providers",
+ "aqbot-session",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -344,6 +345,22 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tracing",
+]
+
+[[package]]
+name = "aqbot-session"
+version = "0.0.1"
+dependencies = [
+ "aqbot-core",
+ "aqbot-gateway",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -8657,6 +8674,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
