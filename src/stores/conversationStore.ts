@@ -48,7 +48,6 @@ import type {
   AgentErrorEvent,
   AgentStreamTextEvent,
   AgentStreamThinkingEvent,
-  SessionInputReceivedEvent,
   SessionOutputReceivedEvent,
 } from '@/types';
 
@@ -3016,13 +3015,17 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         }).then(keepAgentUnlisten((fn) => { unlistenError = fn; }));
       });
 
-      // Invoke the backend command (this creates the real user message in DB)
-      await invoke('agent_query', {
-        conversationId,
-        prompt: content,
-        providerId,
-        modelId,
-        attachments: attachments ?? [],
+      // Invoke the backend command (this creates the real user message in DB
+      // when the session queue picks up this input)
+      await invoke('session_enqueue_input', {
+        request: {
+          conversation_id: conversationId,
+          content,
+          attachments: attachments ?? [],
+          provider_id: providerId,
+          model_id: modelId,
+          remote: false,
+        },
       });
 
       // Wait for agent-done or agent-error event
@@ -4242,23 +4245,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   startSessionInteropListener: async () => {
     if (_sessionInteropUnlisten) return;
 
-    _sessionInteropUnlisten = await listen<SessionInputReceivedEvent>(
-      'session-input-received',
-      (event) => {
-        const { conversation_id, source_address, content } = event.payload;
-        const state = get();
-        // Accept remote input for any conversation that isn't already running.
-        // This allows multiple conversations to run in parallel: remote can start
-        // conversation C while the user is working in A or B.
-        if (state.runningConversations[conversation_id]) return;
-        set({ remoteInputActive: true, remoteInputSource: source_address });
-        get()
-          .sendAgentMessage(content, [], conversation_id)
-          .finally(() => {
-            set({ remoteInputActive: false, remoteInputSource: null });
-          });
-      },
-    );
+    // Note: 'session-input-received' is no longer listened here. Remote input
+    // now goes directly from the Rust WS handler to SessionManager::enqueue,
+    // bypassing the frontend. This prevents inputs from being dropped when
+    // the target conversation is already running - they queue instead.
 
     if (!_sessionOutputUnlisten) {
       _sessionOutputUnlisten = await listen<SessionOutputReceivedEvent>(
@@ -4284,11 +4274,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         (event) => {
           const { conversation_id, content, provider_id, model_id } = event.payload;
           // Auto-start the target conversation regardless of whether it's active
-          invoke('agent_query', {
-            conversationId: conversation_id,
-            prompt: content || ' ',
-            providerId: provider_id,
-            modelId: model_id,
+          invoke('session_enqueue_input', {
+            request: {
+              conversation_id,
+              content: content || ' ',
+              attachments: [],
+              provider_id,
+              model_id,
+              remote: false,
+            },
           }).catch((e) => {
             // Agent already running or other error is acceptable
             console.debug('[session-auto-start]', e);

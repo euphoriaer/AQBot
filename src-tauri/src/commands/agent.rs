@@ -1625,8 +1625,10 @@ pub async fn agent_query(
     let title_settings = global_settings.clone();
     let title_prompt = prompt.clone();
     let session_registry = state.session_registry.clone();
+    let session_manager = state.session_manager.clone();
     let this_device_id = state.this_device_id.clone();
     let session_title = pre_conv.title.clone();
+    let sea_db_for_session = state.sea_db.clone();
 
     tokio::spawn(async move {
         // RAII guard: ensures conv_id is removed from RUNNING_AGENTS on exit (even panic)
@@ -1650,20 +1652,39 @@ pub async fn agent_query(
             session_registry.set_title(&session_addr, session_title).await;
         }
 
-        // Receiver task: forwards incoming session input to the Tauri frontend
-        // via 'session-input-received' event. That event triggers
-        // sendAgentMessage() in the frontend, which calls agent_query() again.
-        let app_for_session = app.clone();
+        // Receiver task: forwards incoming session input directly to the
+        // SessionManager queue. This bypasses the frontend event round-trip
+        // and lets remote inputs queue alongside local inputs (FIFO).
+        let session_manager_for_input = session_manager.clone();
         let conv_id_for_session = conv_id.clone();
         let session_registry_for_cleanup = session_registry.clone();
         let session_addr_for_cleanup = session_addr.clone();
+        let db_for_input = sea_db_for_session.clone();
         tokio::spawn(async move {
             while let Some((source, content)) = session_output_rx.recv().await {
-                let _ = app_for_session.emit("session-input-received", serde_json::json!({
-                    "conversation_id": &conv_id_for_session,
-                    "source_address": &source,
-                    "content": &content,
-                }));
+                // Parse source address to build InputSource::Remote
+                let source_addr = aqbot_gateway::session_registry::SessionAddress::from_wire(&source)
+                    .unwrap_or(aqbot_gateway::session_registry::SessionAddress {
+                        device_id: source.clone(),
+                        conversation_id: conv_id_for_session.clone(),
+                    });
+                // Fetch the conversation's provider/model so the enqueued
+                // input runs with the same config as a local input would.
+                let (provider_id, model_id) = match aqbot_core::repo::conversation::get_conversation(&db_for_input, &conv_id_for_session).await {
+                    Ok(c) => (c.provider_id, c.model_id),
+                    Err(_) => (String::new(), String::new()),
+                };
+                let req = aqbot_session::InputRequest::new(
+                    conv_id_for_session.clone(),
+                    content,
+                    provider_id,
+                    model_id,
+                    aqbot_session::InputSource::Remote {
+                        from: source_addr,
+                    },
+                );
+                // Enqueue and forget - the queue processes sequentially.
+                let _ = session_manager_for_input.enqueue(req).await;
             }
             // Channel closed – unregister and release locks
             session_registry_for_cleanup.unregister(&session_addr_for_cleanup).await;
