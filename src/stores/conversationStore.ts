@@ -101,8 +101,30 @@ export const MAX_LOADED_MESSAGES = 40;
 const CONVERSATIONS_RESOURCE_KEY = 'conversations';
 const MESSAGE_CACHE_MAX_CONVERSATIONS = 8;
 const MESSAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
-let _agentStreamSeq = 0;
-let _activeAgentCancel: (() => void) | null = null;
+let _agentStreamSeqByConv: Record<string, number> = {};
+let _activeAgentCancelByConv: Record<string, (() => void) | null> = {};
+
+function agentRunSeqFor(conversationId: string): number {
+  return _agentStreamSeqByConv[conversationId] ?? 0;
+}
+
+function bumpAgentRunSeq(conversationId: string): number {
+  const next = (_agentStreamSeqByConv[conversationId] ?? 0) + 1;
+  _agentStreamSeqByConv[conversationId] = next;
+  return next;
+}
+
+function getActiveAgentCancel(conversationId: string): (() => void) | null {
+  return _activeAgentCancelByConv[conversationId] ?? null;
+}
+
+function setActiveAgentCancel(conversationId: string, fn: (() => void) | null): void {
+  if (fn === null) {
+    delete _activeAgentCancelByConv[conversationId];
+  } else {
+    _activeAgentCancelByConv[conversationId] = fn;
+  }
+}
 let _conversationsRequest: { revision: number; promise: Promise<void> } | null = null;
 
 function mutateConversationsMeta(meta: ResourceMeta): ResourceMeta {
@@ -1256,6 +1278,14 @@ interface ConversationState {
   streamingMessageId: string | null;
   streamingConversationId: string | null;
   activeStreamId: string | null;
+  /**
+   * Per-conversation running state. While `streaming` tracks the currently
+   * active conversation for UI display, this map is the source of truth for
+   * "is any agent run in progress for conversation X". Multiple conversations
+   * can be running at once (user started A, switched to B and started B,
+   * remote triggered C, etc).
+   */
+  runningConversations: Record<string, boolean>;
   streamActivityByMessageId: Record<string, StreamActivity>;
   thinkingActiveMessageIds: Set<string>;
   error: string | null;
@@ -1320,8 +1350,10 @@ interface ConversationState {
   batchDelete: (ids: string[]) => Promise<void>;
   batchArchive: (ids: string[]) => Promise<void>;
   sendMessage: (content: string, attachments?: AttachmentInput[], searchProviderId?: string | null) => Promise<void>;
-  /** Send a message in agent mode (non-streaming MVP) */
-  sendAgentMessage: (content: string, attachments?: AttachmentInput[]) => Promise<void>;
+  /** Send a message in agent mode (non-streaming MVP).
+   *  Optionally accept a target conversation ID so that remote/session-interop
+   *  inputs can target a non-active conversation without switching the UI. */
+  sendAgentMessage: (content: string, attachments?: AttachmentInput[], targetConversationId?: string) => Promise<void>;
   regenerateMessage: (targetMessageId?: string) => Promise<Message>;
   regenerateWithModel: (
     targetMessageId: string,
@@ -1629,6 +1661,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   streamingMessageId: null,
   streamingConversationId: null,
   activeStreamId: null,
+  runningConversations: {},
   streamActivityByMessageId: {},
   thinkingActiveMessageIds: new Set<string>(),
   error: null,
@@ -2640,15 +2673,17 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  sendAgentMessage: async (content, attachments = []) => {
-    const conversationId = get().activeConversationId;
+  sendAgentMessage: async (content, attachments = [], targetConversationId) => {
+    const conversationId = targetConversationId ?? get().activeConversationId;
     if (!conversationId) throw new Error('No active conversation');
     if (get().loading) throw new Error('Conversation messages are still loading');
 
-    _activeAgentCancel?.();
-    _activeAgentCancel = null;
-    const agentRunSeq = ++_agentStreamSeq;
-    const isCurrentAgentRun = () => agentRunSeq === _agentStreamSeq;
+    // Only cancel an existing run in THIS conversation. Other conversations
+    // may be running in parallel and must not be disturbed.
+    getActiveAgentCancel(conversationId)?.();
+    setActiveAgentCancel(conversationId, null);
+    const agentRunSeq = bumpAgentRunSeq(conversationId);
+    const isCurrentAgentRun = () => agentRunSeq === agentRunSeqFor(conversationId);
 
     const conversation = get().conversations.find((c) => c.id === conversationId);
     if (!conversation) throw new Error('Conversation not found');
@@ -2709,6 +2744,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       streaming: true,
       streamingConversationId: conversationId,
       streamingMessageId: currentMsgId,
+      runningConversations: {
+        ...s.runningConversations,
+        [conversationId]: true,
+      },
       streamActivityByMessageId: {
         ...s.streamActivityByMessageId,
         [currentMsgId]: createStreamActivity(
@@ -2813,8 +2852,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       unlistenDone = null;
       unlistenError = null;
       unlistenMessageId = null;
-      if (_activeAgentCancel === cancelActiveRun) {
-        _activeAgentCancel = null;
+      if (getActiveAgentCancel(conversationId) === cancelActiveRun) {
+        setActiveAgentCancel(conversationId, null);
       }
     };
 
@@ -2830,12 +2869,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const eventPromise = new Promise<void>((resolve, reject) => {
         cancelActiveRun = () => {
           if (isCurrentAgentRun()) {
-            _agentStreamSeq++;
+            bumpAgentRunSeq(conversationId);
           }
           cleanup();
           resolve();
         };
-        _activeAgentCancel = cancelActiveRun;
+        setActiveAgentCancel(conversationId, cancelActiveRun);
 
         // Listen for the real assistant message ID from the backend
         // This replaces the temp ID so tool call events can be matched
@@ -2874,8 +2913,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           // Clear pending buffer (done event overwrites with final content)
           clearAgentStreamBuffer();
           const isActiveConversation = get().activeConversationId === conversationId;
-          // Skip if streaming was already cancelled (avoid stale fetchMessages re-render)
-          const isStillStreaming = get().streaming && get().streamingMessageId === currentMsgId;
+          // Skip if streaming was already cancelled (avoid stale fetchMessages re-render).
+          // Use the per-conversation run seq instead of the global streaming flag,
+          // because multiple conversations may be streaming at once and the
+          // global flag only tracks whichever conversation started last.
+          const isStillStreaming = isCurrentAgentRun();
           if (!isStillStreaming) {
             if (!isActiveConversation) {
               _pendingConversationRefresh.add(conversationId);
@@ -2885,30 +2927,36 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             return;
           }
 
-          set((s) => ({
-            streaming: false,
-            streamingMessageId: null,
-            streamingConversationId: null,
-            activeStreamId: null,
-            thinkingActiveMessageIds: (() => {
-              const next = new Set(s.thinkingActiveMessageIds);
-              next.delete(currentMsgId);
-              return next;
-            })(),
-            messages: s.messages.map((m) => {
-              if (m.id === currentMsgId) {
-                return {
-                  ...m,
-                  id: event.payload.assistantMessageId || m.id,
-                  content: event.payload.text,
-                  status: 'complete' as const,
-                  prompt_tokens: event.payload.usage?.input_tokens ?? null,
-                  completion_tokens: event.payload.usage?.output_tokens ?? null,
-                };
-              }
-              return m;
-            }),
-          }));
+          set((s) => {
+            const nextRunning = { ...s.runningConversations };
+            delete nextRunning[conversationId];
+            const wasPrimaryStream = s.streamingConversationId === conversationId;
+            return {
+              streaming: Object.keys(nextRunning).length > 0,
+              streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
+              streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+              activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
+              runningConversations: nextRunning,
+              thinkingActiveMessageIds: (() => {
+                const next = new Set(s.thinkingActiveMessageIds);
+                next.delete(currentMsgId);
+                return next;
+              })(),
+              messages: s.messages.map((m) => {
+                if (m.id === currentMsgId) {
+                  return {
+                    ...m,
+                    id: event.payload.assistantMessageId || m.id,
+                    content: event.payload.text,
+                    status: 'complete' as const,
+                    prompt_tokens: event.payload.usage?.input_tokens ?? null,
+                    completion_tokens: event.payload.usage?.output_tokens ?? null,
+                  };
+                }
+                return m;
+              }),
+            };
+          });
 
           cleanup();
           if (isActiveConversation) {
@@ -2925,35 +2973,43 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           if (event.payload.conversationId !== conversationId || !isCurrentAgentRun()) return;
           // Clear pending buffer (error event overwrites content)
           clearAgentStreamBuffer();
-          // Skip if streaming was already cancelled
-          const isStillStreaming = get().streaming && get().streamingMessageId === currentMsgId;
+          // Skip if streaming was already cancelled. Use the per-conversation
+          // run seq so a parallel run in another conversation doesn't trick
+          // this listener into thinking it was cancelled.
+          const isStillStreaming = isCurrentAgentRun();
           if (!isStillStreaming) {
             cleanup();
             resolve();
             return;
           }
 
-          set((s) => ({
-            streaming: false,
-            streamingMessageId: null,
-            streamingConversationId: null,
-            activeStreamId: null,
-            thinkingActiveMessageIds: (() => {
-              const next = new Set(s.thinkingActiveMessageIds);
-              next.delete(currentMsgId);
-              return next;
-            })(),
-            messages: s.messages.map((m) => {
-              if (m.id === currentMsgId) {
-                return {
-                  ...m,
-                  content: event.payload.message,
-                  status: 'error' as const,
-                };
-              }
-              return m;
-            }),
-          }));
+          set((s) => {
+            const nextRunning = { ...s.runningConversations };
+            delete nextRunning[conversationId];
+            const wasPrimaryStream = s.streamingConversationId === conversationId;
+            return {
+              streaming: Object.keys(nextRunning).length > 0,
+              streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
+              streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+              activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
+              runningConversations: nextRunning,
+              thinkingActiveMessageIds: (() => {
+                const next = new Set(s.thinkingActiveMessageIds);
+                next.delete(currentMsgId);
+                return next;
+              })(),
+              messages: s.messages.map((m) => {
+                if (m.id === currentMsgId) {
+                  return {
+                    ...m,
+                    content: event.payload.message,
+                    status: 'error' as const,
+                  };
+                }
+                return m;
+              }),
+            };
+          });
 
           cleanup();
           reject(new Error(event.payload.message));
@@ -2977,18 +3033,24 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       console.error('[sendAgentMessage] error:', errMsg);
 
       // If streaming is still true, the error came from invoke itself (not an event)
-      if (get().streaming && (get().streamingMessageId === currentMsgId)) {
-        set((s) => ({
-          streaming: false,
-          streamingMessageId: null,
-          streamingConversationId: null,
-          activeStreamId: null,
-          messages: s.messages.map((m) =>
-            m.id === currentMsgId
-              ? { ...m, content: errMsg, status: 'error' as const }
-              : m
-          ),
-        }));
+      if (isCurrentAgentRun()) {
+        set((s) => {
+          const nextRunning = { ...s.runningConversations };
+          delete nextRunning[conversationId];
+          const wasPrimaryStream = s.streamingConversationId === conversationId;
+          return {
+            streaming: Object.keys(nextRunning).length > 0,
+            streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
+            streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+            activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
+            runningConversations: nextRunning,
+            messages: s.messages.map((m) =>
+              m.id === currentMsgId
+                ? { ...m, content: errMsg, status: 'error' as const }
+                : m
+            ),
+          };
+        });
       }
     }
   },
@@ -4185,13 +4247,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       (event) => {
         const { conversation_id, source_address, content } = event.payload;
         const state = get();
-        // Only auto-process if this is the active conversation
-        if (state.activeConversationId === conversation_id && !state.streaming) {
-          set({ remoteInputActive: true, remoteInputSource: source_address });
-          get().sendAgentMessage(content).finally(() => {
+        // Accept remote input for any conversation that isn't already running.
+        // This allows multiple conversations to run in parallel: remote can start
+        // conversation C while the user is working in A or B.
+        if (state.runningConversations[conversation_id]) return;
+        set({ remoteInputActive: true, remoteInputSource: source_address });
+        get()
+          .sendAgentMessage(content, [], conversation_id)
+          .finally(() => {
             set({ remoteInputActive: false, remoteInputSource: null });
           });
-        }
       },
     );
 
@@ -4266,10 +4331,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   cancelCurrentStream: () => {
     const cancellingMultiModel = _isMultiModelActive;
-    if (_activeAgentCancel) {
-      _activeAgentCancel();
-    } else {
-      _agentStreamSeq++;
+    // Only cancel the currently active conversation's run. Other conversations
+    // running in parallel are intentionally not disturbed.
+    const activeConvId = get().activeConversationId;
+    if (activeConvId) {
+      const cancel = getActiveAgentCancel(activeConvId);
+      if (cancel) {
+        cancel();
+      } else {
+        bumpAgentRunSeq(activeConvId);
+      }
     }
     flushPendingStreamChunk(set, get);
     materializeLiveStreamContent(set, [
@@ -4300,7 +4371,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       _streamUiFlushTimer = null;
     }
     // Tell the backend to cancel the stream — fire and forget
-    const conversationId = get().streamingConversationId ?? get().activeConversationId;
+    const conversationId = get().activeConversationId;
     const streamId = get().activeStreamId;
     if (conversationId && isTauri()) {
       invoke('cancel_stream', {
@@ -4315,20 +4386,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
     // Mark the current streaming message as partial
     const streamMsgId = get().streamingMessageId;
-    set((s) => ({
-      streaming: false,
-      streamingMessageId: null,
-      streamingConversationId: null,
-      activeStreamId: null,
-      streamActivityByMessageId: removeStreamActivities(
-        s.streamActivityByMessageId,
-        [streamMsgId],
-      ),
-      thinkingActiveMessageIds: new Set<string>(),
-      messages: streamMsgId
-        ? s.messages.map(m => m.id === streamMsgId ? { ...m, status: 'partial' as const } : m)
-        : s.messages,
-    }));
+    set((s) => {
+      const nextRunning = { ...s.runningConversations };
+      if (activeConvId) delete nextRunning[activeConvId];
+      const wasPrimaryStream = !s.streamingConversationId || s.streamingConversationId === activeConvId;
+      return {
+        streaming: Object.keys(nextRunning).length > 0,
+        streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
+        streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+        activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
+        runningConversations: nextRunning,
+        streamActivityByMessageId: removeStreamActivities(
+          s.streamActivityByMessageId,
+          [streamMsgId],
+        ),
+        thinkingActiveMessageIds: new Set<string>(),
+        messages: streamMsgId
+          ? s.messages.map(m => m.id === streamMsgId ? { ...m, status: 'partial' as const } : m)
+          : s.messages,
+      };
+    });
   },
 
   hydrateMessageVersions: (parentMessageId, versions, activeMessageId) => {
