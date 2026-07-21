@@ -35,8 +35,9 @@ pub struct AppState {
     pub vector_store: Arc<aqbot_core::vector_store::VectorStore>,
     pub knowledge_index_scheduler: Arc<knowledge_index_scheduler::KnowledgeIndexScheduler>,
     pub stream_cancel_flags: Arc<Mutex<std::collections::HashMap<String, StreamCancelEntry>>>,
-    pub agent_cancel_tokens:
-        Arc<Mutex<std::collections::HashMap<String, open_agent_sdk::CancellationToken>>>,
+    pub agent_cancel_tokens: Arc<
+        Mutex<std::collections::HashMap<String, (String, open_agent_sdk::CancellationToken)>>,
+    >,
     pub agent_permission_senders:
         Arc<Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
     pub agent_ask_senders:

@@ -51,18 +51,27 @@ impl Drop for RunningAgentGuard {
         }
     }
 }
-
 struct AgentCancelTokenGuard {
     conversation_id: String,
-    tokens: Arc<tokio::sync::Mutex<HashMap<String, open_agent_sdk::CancellationToken>>>,
+    run_id: String,
+    tokens: Arc<
+        tokio::sync::Mutex<HashMap<String, (String, open_agent_sdk::CancellationToken)>>,
+    >,
 }
 
 impl Drop for AgentCancelTokenGuard {
     fn drop(&mut self) {
         let conversation_id = self.conversation_id.clone();
+        let run_id = self.run_id.clone();
         let tokens = self.tokens.clone();
         tokio::spawn(async move {
-            tokens.lock().await.remove(&conversation_id);
+            let mut map = tokens.lock().await;
+            // Only remove if the entry still belongs to this run. A newer run may
+            // have already replaced the token, in which case dropping the guard
+            // must not wipe the new run's cancel handle.
+            if map.get(&conversation_id).map(|(rid, _)| rid == &run_id).unwrap_or(false) {
+                map.remove(&conversation_id);
+            }
         });
     }
 }
@@ -620,6 +629,19 @@ fn truncate_preview(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Mark an agent session as idle, logging failures instead of silently dropping
+/// them. A missed transition leaves the session stuck "running" in the DB, so
+/// we want to know when it happens rather than eating the error.
+async fn mark_session_idle(db: &sea_orm::DatabaseConnection, session_id: &str) {
+    if let Err(e) = agent_session::update_agent_session_status(db, session_id, "idle").await {
+        tracing::warn!(
+            "[agent] Failed to reset session {} status to idle: {}",
+            session_id,
+            e
+        );
+    }
+}
+
 /// Extract a short human-readable summary from tool input JSON for inline rendering.
 fn get_tool_input_summary(tool_name: &str, input: &Value) -> String {
     let try_key = |key: &str| {
@@ -741,7 +763,11 @@ pub async fn agent_query(
     // initialization so concurrent queries cannot both pass a separate check.
     let run_id = aqbot_core::utils::gen_id();
     {
-        let mut running = RUNNING_AGENTS.lock().unwrap();
+        // Recover from a poisoned mutex instead of panicking: a prior panic would
+        // otherwise make agent_query permanently unusable for all conversations.
+        let mut running = RUNNING_AGENTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if running.contains_key(&conversation_id) {
             return Err("Agent is already running".to_string());
         }
@@ -749,16 +775,17 @@ pub async fn agent_query(
     }
     let running_guard = RunningAgentGuard {
         conversation_id: conversation_id.clone(),
-        run_id,
+        run_id: run_id.clone(),
     };
     let cancel_token = open_agent_sdk::CancellationToken::new();
     state
         .agent_cancel_tokens
         .lock()
         .await
-        .insert(conversation_id.clone(), cancel_token.clone());
+        .insert(conversation_id.clone(), (run_id.clone(), cancel_token.clone()));
     let cancel_guard = AgentCancelTokenGuard {
         conversation_id: conversation_id.clone(),
+        run_id,
         tokens: state.agent_cancel_tokens.clone(),
     };
 
@@ -2051,8 +2078,7 @@ pub async fn agent_query(
                         persist_agent_stream_snapshot(&db, message_id, &failed_content).await;
                         let _ = message::update_message_status(&db, message_id, "error").await;
                     }
-                    let _ =
-                        agent_session::update_agent_session_status(&db, &session_id, "idle").await;
+                    mark_session_idle(&db, &session_id).await;
                     return;
                 }
                 SDKMessage::ThinkingDelta { thinking } => {
@@ -2175,8 +2201,7 @@ pub async fn agent_query(
                             message: "Agent task crashed unexpectedly".to_string(),
                         },
                     );
-                    let _ =
-                        agent_session::update_agent_session_status(&db, &session_id, "idle").await;
+                    mark_session_idle(&db, &session_id).await;
                     return;
                 }
             }
@@ -2199,7 +2224,7 @@ pub async fn agent_query(
                     message: format!("Failed to stage generated image: {error}"),
                 },
             );
-            let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
+            mark_session_idle(&db, &session_id).await;
             return;
         }
 
@@ -2221,7 +2246,7 @@ pub async fn agent_query(
                     message: "Agent ended unexpectedly without producing a result".to_string(),
                 },
             );
-            let _ = agent_session::update_agent_session_status(&db, &session_id, "idle").await;
+            mark_session_idle(&db, &session_id).await;
             return;
         }
 
@@ -2580,7 +2605,7 @@ pub async fn agent_cancel(
         .await
         .map_err(|e| e.to_string())?;
 
-    if let Some(token) = state
+    if let Some((_rid, token)) = state
         .agent_cancel_tokens
         .lock()
         .await
