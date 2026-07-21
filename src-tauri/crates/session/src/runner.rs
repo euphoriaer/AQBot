@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use aqbot_core::types::AttachmentInput;
 use crate::input::{InputRequest, InputSource};
 
 /// Context passed to the runner. Contains everything the runner needs to
@@ -17,6 +18,7 @@ pub struct InputRunContext {
     pub handle_id: String,
     pub conversation_id: String,
     pub content: String,
+    pub attachments: Vec<AttachmentInput>,
     pub provider_id: String,
     pub model_id: String,
     pub source: InputSource,
@@ -29,6 +31,7 @@ impl InputRunContext {
             handle_id: req.handle_id.clone(),
             conversation_id: req.conversation_id.clone(),
             content: req.content.clone(),
+            attachments: req.attachments.clone(),
             provider_id: req.provider_id.clone(),
             model_id: req.model_id.clone(),
             source: req.source.clone(),

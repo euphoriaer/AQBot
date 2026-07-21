@@ -14,6 +14,6 @@ pub use file_writer::{SessionFileReader, SessionFileWriter};
 pub use input::{
     InputHandle, InputHandleInfo, InputRequest, InputSource, InputStatus,
 };
-pub use manager::{make_blocking_request, Session, SessionManager};
+pub use manager::{make_blocking_request, QueueChangeCallback, Session, SessionManager};
 pub use record::{SessionRecord, SessionRecordRole, TokenCounts};
 pub use runner::{InputRunner, InputRunContext};

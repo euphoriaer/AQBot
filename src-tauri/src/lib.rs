@@ -485,6 +485,7 @@ pub fn run() {
         commands::agent::agent_session_disconnect,
         commands::agent::agent_session_get_connections,
         commands::agent::agent_session_list,
+        commands::agent::agent_session_register_peer,
         commands::agent::agent_session_send_input,
         commands::agent::agent_session_acquire_lock,
         commands::agent::agent_session_release_lock,

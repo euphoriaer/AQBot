@@ -27,6 +27,19 @@ pub struct Session {
     /// JSONL file writer. None if file writing failed to initialize.
     file_writer: Arc<RwLock<Option<SessionFileWriter>>>,
     runner: SharedInputRunner,
+    /// Optional callback invoked whenever the queue state changes
+    /// (enqueue / cancel / start / done / failed / cancelled). The Tauri
+    /// layer uses this to emit `session-queue-updated` so the UI can refetch.
+    on_queue_changed: Option<QueueChangeCallback>,
+}
+
+/// Callback type for queue state changes. Receives the conversation_id.
+pub type QueueChangeCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
+fn notify_queue_changed(on_change: &Option<QueueChangeCallback>, conversation_id: &str) {
+    if let Some(cb) = on_change {
+        cb(conversation_id);
+    }
 }
 
 impl Session {
@@ -34,6 +47,7 @@ impl Session {
         conversation_id: String,
         runner: SharedInputRunner,
         sessions_dir: PathBuf,
+        on_queue_changed: Option<QueueChangeCallback>,
     ) -> Arc<Self> {
         let file_writer = match SessionFileWriter::open(&sessions_dir, &conversation_id) {
             Ok(w) => {
@@ -54,7 +68,7 @@ impl Session {
             }
         };
         let session = Arc::new(Self {
-            conversation_id,
+            conversation_id: conversation_id.clone(),
             queue: Arc::new(RwLock::new(VecDeque::new())),
             notify: Arc::new(Notify::new()),
             current: Arc::new(RwLock::new(None)),
@@ -62,6 +76,7 @@ impl Session {
             output_subscribers: Arc::new(RwLock::new(Vec::new())),
             file_writer: Arc::new(RwLock::new(file_writer)),
             runner,
+            on_queue_changed,
         });
         session.spawn_processor();
         session
@@ -83,6 +98,7 @@ impl Session {
         let req_arc = Arc::new(req);
         self.queue.write().await.push_back(req_arc);
         self.notify.notify_one();
+        notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
         handle
     }
 
@@ -94,6 +110,8 @@ impl Session {
             if let Some(req) = current.as_ref() {
                 if req.handle_id == handle_id {
                     req.cancel_token.cancel();
+                    drop(current);
+                    notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
                     return true;
                 }
             }
@@ -105,6 +123,8 @@ impl Session {
                 req.cancel_token.cancel();
                 *req.status.write().await = InputStatus::Cancelled;
                 signal_done(&req, Err("cancelled".to_string()));
+                drop(q);
+                notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
                 return true;
             }
         }
@@ -116,6 +136,8 @@ impl Session {
         let current = self.current.read().await;
         if let Some(req) = current.as_ref() {
             req.cancel_token.cancel();
+            drop(current);
+            notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
             return true;
         }
         false
@@ -208,11 +230,13 @@ impl Session {
                         if req.cancel_token.is_cancelled() {
                             *req.status.write().await = InputStatus::Cancelled;
                             signal_done(&req, Err("cancelled".to_string()));
+                            notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
                             continue;
                         }
                         // Mark running
                         *req.status.write().await = InputStatus::Running;
                         *self.current.write().await = Some(req.clone());
+                        notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
 
                         let ctx = InputRunContext::from_request(&req);
                         let runner = Arc::clone(&self.runner);
@@ -241,6 +265,7 @@ impl Session {
                         }
                         signal_done(&req, result);
                         *self.current.write().await = None;
+                        notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
                     }
                     None => break, // queue empty, wait for next notify
                 }
@@ -277,14 +302,20 @@ pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<Session>>>,
     runner: SharedInputRunner,
     sessions_dir: PathBuf,
+    on_queue_changed: Option<QueueChangeCallback>,
 }
 
 impl SessionManager {
-    pub fn new(runner: SharedInputRunner, sessions_dir: PathBuf) -> Self {
+    pub fn new(
+        runner: SharedInputRunner,
+        sessions_dir: PathBuf,
+        on_queue_changed: Option<QueueChangeCallback>,
+    ) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
             runner,
             sessions_dir,
+            on_queue_changed,
         }
     }
 
@@ -305,6 +336,7 @@ impl SessionManager {
             conversation_id.to_string(),
             Arc::clone(&self.runner),
             self.sessions_dir.clone(),
+            self.on_queue_changed.clone(),
         );
         sessions.insert(conversation_id.to_string(), Arc::clone(&session));
         session
@@ -378,12 +410,13 @@ impl SessionManager {
 pub fn make_blocking_request(
     conversation_id: String,
     content: String,
+    attachments: Vec<aqbot_core::types::AttachmentInput>,
     provider_id: String,
     model_id: String,
     source: InputSource,
 ) -> (InputRequest, tokio::sync::oneshot::Receiver<Result<(), String>>) {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let req = InputRequest::new(conversation_id, content, provider_id, model_id, source);
+    let req = InputRequest::new(conversation_id, content, attachments, provider_id, model_id, source);
     *req.done_tx.lock().unwrap() = Some(tx);
     (req, rx)
 }

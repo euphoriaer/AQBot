@@ -1423,13 +1423,17 @@ interface ConversationState {
 export interface InputHandleInfo {
   handle_id: string;
   conversation_id: string;
-  source: { Local: null } | { Remote: { from: { device_id: string; conversation_id: string } } };
+  // Adjacently-tagged enum: `#[serde(tag = "kind", content = "detail")]`
+  source:
+    | { kind: 'Local'; detail: null }
+    | { kind: 'Remote'; detail: { from: { device_id: string; conversation_id: string } } };
+  // Adjacently-tagged enum: `#[serde(tag = "state", content = "detail")]`
   status:
-    | { Queued: number }
-    | 'Running'
-    | 'Done'
-    | 'Cancelled'
-    | { Failed: string };
+    | { state: 'Queued'; detail: number }
+    | { state: 'Running'; detail: null }
+    | { state: 'Done'; detail: null }
+    | { state: 'Cancelled'; detail: null }
+    | { state: 'Failed'; detail: string };
   preview: string;
   enqueued_at: number;
 }

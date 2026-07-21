@@ -1672,7 +1672,7 @@ pub async fn agent_query(
     let session_title = pre_conv.title.clone();
     let sea_db_for_session = state.sea_db.clone();
 
-    tokio::spawn(async move {
+    let agent_task_handle = tokio::spawn(async move {
         // RAII guard: ensures conv_id is removed from RUNNING_AGENTS on exit (even panic)
         let _running_guard = running_guard;
         let _cancel_guard = cancel_guard;
@@ -1719,6 +1719,7 @@ pub async fn agent_query(
                 let req = aqbot_session::InputRequest::new(
                     conv_id_for_session.clone(),
                     content,
+                    Vec::new(),
                     provider_id,
                     model_id,
                     aqbot_session::InputSource::Remote {
@@ -2616,6 +2617,13 @@ pub async fn agent_query(
         }
     });
 
+    // Await the background task so that callers (AgentInputRunner) know when
+    // the agent run actually finished. Without this, the Session's
+    // processor_loop would mark the input Done immediately and start the next
+    // one, which then fails with "Agent is already running".
+    agent_task_handle
+        .await
+        .map_err(|e| format!("Agent task panicked: {}", e))?;
     Ok(())
 }
 

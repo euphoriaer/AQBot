@@ -38,6 +38,7 @@ impl InputRunner for AgentInputRunner {
         let app = self.app.clone();
         let conversation_id = ctx.conversation_id.clone();
         let prompt = ctx.content.clone();
+        let attachments = ctx.attachments.clone();
         let provider_id = ctx.provider_id.clone();
         let model_id = ctx.model_id.clone();
         let cancel_token = ctx.cancel_token.clone();
@@ -59,13 +60,14 @@ impl InputRunner for AgentInputRunner {
                 prompt,
                 provider_id,
                 model_id,
-                None,
+                Some(attachments),
             )
             .await
         });
 
+        let mut query_handle = query_handle;
         tokio::select! {
-            result = query_handle => {
+            result = &mut query_handle => {
                 match result {
                     Ok(Ok(())) => Ok(()),
                     Ok(Err(e)) => Err(e),
@@ -73,8 +75,13 @@ impl InputRunner for AgentInputRunner {
                 }
             }
             _ = cancel_token.cancelled() => {
+                // Abort the spawned agent_query task to prevent it from
+                // continuing in the background (which would leave
+                // RUNNING_AGENTS held and block the next input).
+                query_handle.abort();
                 // Best-effort cancel: fire agent_cancel which triggers the
-                // cancel token stored by agent_query in agent_cancel_tokens.
+                // cancel token stored by agent_query in agent_cancel_tokens
+                // and clears RUNNING_AGENTS / session registry state.
                 let cancel_app = app.clone();
                 let cancel_conv = ctx.conversation_id.clone();
                 tokio::spawn(async move {
@@ -136,6 +143,7 @@ pub async fn session_enqueue_input(
     let (req, _rx) = make_blocking_request(
         conversation_id.clone(),
         request.content,
+        request.attachments,
         provider_id,
         model_id,
         source,
@@ -201,7 +209,14 @@ pub async fn session_get_history(
 
 /// Convenience constructor for AppState setup.
 pub fn new_manager(app: AppHandle, app_data_dir: PathBuf) -> Arc<SessionManager> {
-    let runner: Arc<dyn InputRunner> = Arc::new(AgentInputRunner { app });
+    let runner: Arc<dyn InputRunner> = Arc::new(AgentInputRunner { app: app.clone() });
     let sessions_dir = app_data_dir.join("sessions");
-    Arc::new(SessionManager::new(runner, sessions_dir))
+    // Callback fired whenever any session's queue state changes. Emits a
+    // Tauri event so the UI can refetch `session_list_queue` for the active
+    // conversation. Covers processor_loop transitions (Queued -> Running ->
+    // Done/Failed/Cancelled) that the command-layer emits don't catch.
+    let on_queue_changed: aqbot_session::QueueChangeCallback = Arc::new(move |conversation_id: &str| {
+        emit_queue_updated(&app, conversation_id);
+    });
+    Arc::new(SessionManager::new(runner, sessions_dir, Some(on_queue_changed)))
 }

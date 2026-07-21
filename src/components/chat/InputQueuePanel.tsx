@@ -3,21 +3,24 @@ import { CloseOutlined, ThunderboltOutlined, ClockCircleOutlined } from '@ant-de
 import { useTranslation } from 'react-i18next';
 import { useConversationStore, type InputHandleInfo } from '@/stores';
 
-function isRemote(source: InputHandleInfo['source']): source is { Remote: { from: { device_id: string; conversation_id: string } } } {
-  return typeof source === 'object' && source !== null && 'Remote' in (source as Record<string, unknown>);
+function remoteAddress(source: InputHandleInfo['source']): string | null {
+  if (source.kind === 'Remote') return source.detail.from.device_id;
+  return null;
 }
 
-function statusLabel(status: InputHandleInfo['status']): { text: string; color: string } {
-  if (status === 'Running') return { text: 'Running', color: 'processing' };
-  if (status === 'Done') return { text: 'Done', color: 'success' };
-  if (status === 'Cancelled') return { text: 'Cancelled', color: 'default' };
-  if (typeof status === 'object' && status !== null && 'Queued' in (status as any)) {
-    return { text: `Queued #${(status as any).Queued}`, color: 'warning' };
+function statusLabel(status: InputHandleInfo['status']): { text: string; color: string; cancellable: boolean } {
+  switch (status.state) {
+    case 'Running':
+      return { text: 'Running', color: 'processing', cancellable: true };
+    case 'Queued':
+      return { text: `Queued #${status.detail}`, color: 'warning', cancellable: true };
+    case 'Done':
+      return { text: 'Done', color: 'success', cancellable: false };
+    case 'Cancelled':
+      return { text: 'Cancelled', color: 'default', cancellable: false };
+    case 'Failed':
+      return { text: 'Failed', color: 'error', cancellable: false };
   }
-  if (typeof status === 'object' && status !== null && 'Failed' in (status as any)) {
-    return { text: 'Failed', color: 'error' };
-  }
-  return { text: 'Unknown', color: 'default' };
 }
 
 export function InputQueuePanel() {
@@ -43,8 +46,7 @@ export function InputQueuePanel() {
     >
       {queue.map((item) => {
         const st = statusLabel(item.status);
-        const remoteSource = isRemote(item.source) ? item.source.Remote : null;
-        const remoteAddr = remoteSource?.from.device_id ?? null;
+        const remoteAddr = remoteAddress(item.source);
         return (
           <div
             key={item.handle_id}
@@ -67,10 +69,10 @@ export function InputQueuePanel() {
             <Tag color={st.color} style={{ margin: 0, fontSize: 11, lineHeight: '18px' }}>
               {st.text}
             </Tag>
-            {remoteSource ? (
+            {remoteAddr ? (
               <Tooltip title={`Remote: ${remoteAddr}`}>
                 <Tag color="purple" style={{ margin: 0, fontSize: 11, lineHeight: '18px' }}>
-                  Remote · {remoteAddr?.slice(0, 12)}
+                  Remote · {remoteAddr.slice(0, 12)}
                 </Tag>
               </Tooltip>
             ) : (
@@ -89,7 +91,7 @@ export function InputQueuePanel() {
             >
               {item.preview || '(empty)'}
             </span>
-            {(st.text === 'Running' || st.text.startsWith('Queued')) && (
+            {st.cancellable && (
               <Button
                 size="small"
                 type="text"

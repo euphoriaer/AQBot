@@ -1,5 +1,6 @@
 //! Input data structures for the Session queue.
 
+use aqbot_core::types::AttachmentInput;
 use aqbot_gateway::session_registry::SessionAddress;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,8 @@ pub struct InputRequest {
     pub conversation_id: String,
     /// The user's prompt content.
     pub content: String,
+    /// Attachments (images, files) the user attached to this input.
+    pub attachments: Vec<AttachmentInput>,
     /// Provider/model override (empty string = use conversation default).
     pub provider_id: String,
     pub model_id: String,
@@ -66,6 +69,7 @@ impl InputRequest {
     pub fn new(
         conversation_id: String,
         content: String,
+        attachments: Vec<AttachmentInput>,
         provider_id: String,
         model_id: String,
         source: InputSource,
@@ -74,6 +78,7 @@ impl InputRequest {
             handle_id: uuid::Uuid::new_v4().to_string(),
             conversation_id,
             content,
+            attachments,
             provider_id,
             model_id,
             source,
