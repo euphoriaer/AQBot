@@ -14,7 +14,16 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Emit a `session-queue-updated` event so the UI can refetch the queue for
+/// the given conversation. Called after enqueue/cancel/agent-done transitions.
+pub fn emit_queue_updated(app: &AppHandle, conversation_id: &str) {
+    let _ = app.emit(
+        "session-queue-updated",
+        serde_json::json!({ "conversation_id": conversation_id }),
+    );
+}
 
 /// Adapter that lets the Session crate call into the existing agent_query
 /// logic. Holds an AppHandle so it can reach AppState via Tauri's state
@@ -106,24 +115,26 @@ pub struct EnqueueInputRequest {
 /// the session's queue reaches it.
 #[tauri::command]
 pub async fn session_enqueue_input(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: EnqueueInputRequest,
 ) -> Result<InputHandle, String> {
     let manager = state.session_manager.clone();
     let provider_id = request.provider_id.unwrap_or_default();
     let model_id = request.model_id.unwrap_or_default();
+    let conversation_id = request.conversation_id.clone();
     let source = if request.remote {
         InputSource::Remote {
             from: aqbot_gateway::session_registry::SessionAddress {
                 device_id: request.remote_device_id.unwrap_or_default(),
-                conversation_id: request.conversation_id.clone(),
+                conversation_id: conversation_id.clone(),
             },
         }
     } else {
         InputSource::Local
     };
     let (req, _rx) = make_blocking_request(
-        request.conversation_id,
+        conversation_id.clone(),
         request.content,
         provider_id,
         model_id,
@@ -132,30 +143,37 @@ pub async fn session_enqueue_input(
     // Fire-and-forget enqueue. Callers that want to block on completion can
     // use a future `session_wait_for_done(handle_id)` command (Phase 4).
     let handle = manager.enqueue(req).await;
+    emit_queue_updated(&app, &conversation_id);
     Ok(handle)
 }
 
 /// Cancel a queued or running input by handle_id. Returns true if found.
 #[tauri::command]
 pub async fn session_cancel_input(
+    app: AppHandle,
     state: State<'_, AppState>,
     conversation_id: String,
     handle_id: String,
 ) -> Result<bool, String> {
-    Ok(state
+    let cancelled = state
         .session_manager
         .cancel_input(&conversation_id, &handle_id)
-        .await)
+        .await;
+    emit_queue_updated(&app, &conversation_id);
+    Ok(cancelled)
 }
 
 /// Cancel the currently-running input for a conversation. Returns true if
 /// an active input was cancelled.
 #[tauri::command]
 pub async fn session_cancel_active(
+    app: AppHandle,
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> Result<bool, String> {
-    Ok(state.session_manager.cancel_active(&conversation_id).await)
+    let cancelled = state.session_manager.cancel_active(&conversation_id).await;
+    emit_queue_updated(&app, &conversation_id);
+    Ok(cancelled)
 }
 
 /// List the queue (running + queued) for a conversation.

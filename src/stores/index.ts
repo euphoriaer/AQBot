@@ -7,6 +7,7 @@ export {
   subscribeLiveStreamContent,
   useConversationStore,
 } from './conversationStore';
+export type { InputHandleInfo } from './conversationStore';
 export { useCategoryStore } from './categoryStore';
 export { useSettingsStore } from './settingsStore';
 export { useGatewayStore } from './gatewayStore';

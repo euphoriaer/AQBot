@@ -56,6 +56,7 @@ let _sessionInteropUnlisten: UnlistenFn | null = null;
 let _sessionOutputUnlisten: UnlistenFn | null = null;
 let _sessionAutoStartUnlisten: UnlistenFn | null = null;
 let _sessionCancelUnlisten: UnlistenFn | null = null;
+let _sessionQueueUpdatedUnlisten: UnlistenFn | null = null;
 // Generation counter to prevent stale listeners from processing events
 // (fixes React StrictMode double-effect causing duplicate stream processing)
 let _listenerGen = 0;
@@ -1410,6 +1411,27 @@ interface ConversationState {
   remoteInputSource: string | null;
   /** Accumulated real-time output streams from connected sessions, keyed by source address */
   sessionOutputStreams: Record<string, string>;
+  /** Current input queue for the active conversation (queued + running). */
+  inputQueue: InputHandleInfo[];
+  /** Refresh the input queue for the active conversation from the backend. */
+  refreshInputQueue: () => Promise<void>;
+  /** Cancel a queued or running input by handle_id. */
+  cancelInput: (handleId: string) => Promise<void>;
+}
+
+/** Mirror of aqbot_session::input::InputHandleInfo. */
+export interface InputHandleInfo {
+  handle_id: string;
+  conversation_id: string;
+  source: { Local: null } | { Remote: { from: { device_id: string; conversation_id: string } } };
+  status:
+    | { Queued: number }
+    | 'Running'
+    | 'Done'
+    | 'Cancelled'
+    | { Failed: string };
+  preview: string;
+  enqueued_at: number;
 }
 
 function appendStreamChunk(
@@ -1673,6 +1695,32 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   remoteInputActive: false,
   remoteInputSource: null,
   sessionOutputStreams: {},
+  inputQueue: [],
+  refreshInputQueue: async () => {
+    const convId = get().activeConversationId;
+    if (!convId) {
+      set({ inputQueue: [] });
+      return;
+    }
+    try {
+      const queue = await invoke<InputHandleInfo[]>('session_list_queue', { conversationId: convId });
+      // Only update if still the active conversation (avoid races).
+      if (get().activeConversationId === convId) {
+        set({ inputQueue: queue });
+      }
+    } catch (e) {
+      console.debug('[refreshInputQueue]', e);
+    }
+  },
+  cancelInput: async (handleId) => {
+    const convId = get().activeConversationId;
+    if (!convId) return;
+    try {
+      await invoke('session_cancel_input', { conversationId: convId, handleId });
+    } catch (e) {
+      console.error('[cancelInput]', e);
+    }
+  },
   searchEnabled: false,
   searchProviderId: null,
   enabledMcpServerIds: [],
@@ -2124,6 +2172,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       error: null,
       ...conversationPreferenceStateFromConversation(conversation),
     });
+    // Refresh the input queue whenever the active conversation changes.
+    get().refreshInputQueue();
     if (canUseFreshCache) {
       restoreActiveStreamBuffer(set, get, id);
       validateCachedMessageState(set, get, id, cached.state, requestSeq);
@@ -4302,6 +4352,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         },
       );
     }
+
+    if (!_sessionQueueUpdatedUnlisten) {
+      _sessionQueueUpdatedUnlisten = await listen<{ conversation_id: string }>(
+        'session-queue-updated',
+        (event) => {
+          const { conversation_id } = event.payload;
+          if (get().activeConversationId === conversation_id) {
+            get().refreshInputQueue();
+          }
+        },
+      );
+    }
   },
 
   stopSessionInteropListener: () => {
@@ -4320,6 +4382,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (_sessionCancelUnlisten) {
       _sessionCancelUnlisten();
       _sessionCancelUnlisten = null;
+    }
+    if (_sessionQueueUpdatedUnlisten) {
+      _sessionQueueUpdatedUnlisten();
+      _sessionQueueUpdatedUnlisten = null;
     }
   },
 

@@ -34,6 +34,7 @@ import { useUserProfileStore, type AvatarType } from '@/stores/userProfileStore'
 import { useGatewayStore } from '@/stores/gatewayStore';
 import { useResolvedDarkMode } from '@/hooks/useResolvedDarkMode';
 import { InputArea } from './InputArea';
+import { InputQueuePanel } from './InputQueuePanel';
 import { ModelSelector } from './ModelSelector';
 import { parseSearchContent } from '@/lib/searchUtils';
 import {
@@ -4808,6 +4809,7 @@ export function ChatView() {
             {t('chat.scrollToBottom')}
           </Button>
         )}
+        <InputQueuePanel />
         <InputArea />
       </div>
       <Modal

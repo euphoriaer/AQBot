@@ -2494,6 +2494,8 @@ pub async fn agent_query(
                     message: filter_complete_agent_event_text(&error),
                 },
             );
+            // Notify UI that the queue advanced after error.
+            crate::commands::session::emit_queue_updated(&app, &conv_id);
         } else {
             let _ = app.emit(
                 "agent-done",
@@ -2518,6 +2520,8 @@ pub async fn agent_query(
                 }
                 session.emit_output(record).await;
             }
+            // Notify UI that the queue advanced (next input may now be running).
+            crate::commands::session::emit_queue_updated(&app, &conv_id);
         }
 
         // Auto-title: generate AI title after agent completes (first message only)
