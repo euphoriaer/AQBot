@@ -831,6 +831,14 @@ pub async fn agent_query(
         }
     };
 
+    // Write user record to the .session file (JSONL).
+    {
+        let session = state.session_manager.get_or_create(&conversation_id).await;
+        session
+            .emit_output(aqbot_session::SessionRecord::user(0, &prompt))
+            .await;
+    }
+
     if let Err(error) = conversation::increment_message_count(&state.sea_db, &conversation_id).await
     {
         let rollback_errors = super::conversations::rollback_new_message(
@@ -1161,6 +1169,7 @@ pub async fn agent_query(
     let conv_id_for_connect = conversation_id.clone();
     let db_for_connect = state.sea_db.clone();
     let app_for_connect = app.clone();
+    let session_manager_for_connect = state.session_manager.clone();
 
     let connect_fn: open_agent_sdk::tools::session_connect::SessionConnectFn = Arc::new(
         move |request: open_agent_sdk::tools::session_connect::SessionConnectRequest| {
@@ -1169,6 +1178,7 @@ pub async fn agent_query(
             let conv_id = conv_id_for_connect.clone();
             let db = db_for_connect.clone();
             let app = app_for_connect.clone();
+            let session_manager = session_manager_for_connect.clone();
             Box::pin(async move {
                 let source = aqbot_gateway::session_registry::SessionAddress {
                     device_id,
@@ -1529,13 +1539,45 @@ pub async fn agent_query(
                             .ok_or("Missing 'target' for cancel action".to_string())?;
                         let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_str)
                             .ok_or_else(|| format!("Invalid target address: {target_str}"))?;
-                        let app_emit = app.clone();
-                        tokio::spawn(async move {
-                            let _ = app_emit.emit("session-cancel", serde_json::json!({
-                                "conversation_id": &target.conversation_id,
-                            }));
-                        });
-                        Ok(format!("Cancel signal sent to {target_str}."))
+                        // If handle_id provided, cancel that specific input; else cancel active.
+                        let cancelled = if let Some(hid) = request.handle_id.as_deref() {
+                            session_manager.cancel_input(&target.conversation_id, hid).await
+                        } else {
+                            session_manager.cancel_active(&target.conversation_id).await
+                        };
+                        if cancelled {
+                            Ok(format!("Cancelled input on {target_str}."))
+                        } else {
+                            Ok(format!("No matching input to cancel on {target_str}."))
+                        }
+                    }
+                    "get_history" => {
+                        let target_str = request.target
+                            .ok_or("Missing 'target' for get_history action".to_string())?;
+                        let target = aqbot_gateway::session_registry::SessionAddress::from_wire(&target_str)
+                            .ok_or_else(|| format!("Invalid target address: {target_str}"))?;
+                        let limit = request.limit.unwrap_or(50).min(500) as usize;
+                        let records = session_manager
+                            .get_history(&target.conversation_id, Some(limit))
+                            .map_err(|e| e.to_string())?;
+                        if records.is_empty() {
+                            Ok(format!("No history yet for session {target_str}."))
+                        } else {
+                            let mut out = String::new();
+                            for r in records {
+                                out.push_str(&format!(
+                                    "[{}] #{} {}: {}\n",
+                                    r.ts, r.seq, r.role.as_str(), r.content
+                                ));
+                                if let Some(t) = r.thinking.as_ref() {
+                                    out.push_str(&format!("  thinking: {}\n", t));
+                                }
+                                if let Some(tool) = r.tool.as_ref() {
+                                    out.push_str(&format!("  tool: {} -> {}\n", tool, r.content));
+                                }
+                            }
+                            Ok(out)
+                        }
                     }
                     "receive_output" => {
                         let conv_id = source.conversation_id.clone();
@@ -2458,12 +2500,24 @@ pub async fn agent_query(
                 AgentDonePayload {
                     conversation_id: conv_id.clone(),
                     assistant_message_id: current_assistant_msg_id.clone().unwrap_or_default(),
-                    text: final_event_content,
-                    usage: usage_payload,
+                    text: final_event_content.clone(),
+                    usage: usage_payload.clone(),
                     num_turns: Some(num_turns),
                     cost_usd: Some(cost_usd),
                 },
             );
+            // Write assistant record to the .session file.
+            {
+                let session = session_manager.get_or_create(&conv_id).await;
+                let mut record = aqbot_session::SessionRecord::assistant(0, &final_event_content);
+                if let Some(u) = &usage_payload {
+                    record.tokens = Some(aqbot_session::TokenCounts {
+                        input: Some(u.input_tokens),
+                        output: Some(u.output_tokens),
+                    });
+                }
+                session.emit_output(record).await;
+            }
         }
 
         // Auto-title: generate AI title after agent completes (first message only)

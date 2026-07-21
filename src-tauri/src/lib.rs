@@ -495,6 +495,7 @@ pub fn run() {
         commands::session::session_cancel_input,
         commands::session::session_cancel_active,
         commands::session::session_list_queue,
+        commands::session::session_get_history,
         // skills
         commands::skills::list_skills,
         commands::skills::get_skill,
@@ -785,7 +786,8 @@ pub fn run() {
 
             let session_registry = Arc::new(SessionRegistry::new());
 
-            let session_manager = commands::session::new_manager(app.handle().clone());
+            let session_manager =
+                commands::session::new_manager(app.handle().clone(), app_dir.clone());
 
             app.manage(AppState {
                 sea_db: db_handle.conn,

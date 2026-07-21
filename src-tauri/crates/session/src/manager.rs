@@ -1,9 +1,11 @@
 //! `Session` and `SessionManager` - the unified multi-input / multi-output core.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
+use crate::file_writer::SessionFileWriter;
 use crate::input::{
     InputHandle, InputHandleInfo, InputRequest, InputSource, InputStatus,
 };
@@ -22,11 +24,35 @@ pub struct Session {
     seq_counter: Arc<std::sync::atomic::AtomicU64>,
     /// Output subscribers. Each gets a copy of every emitted record.
     output_subscribers: Arc<RwLock<Vec<tokio::sync::mpsc::UnboundedSender<SessionRecord>>>>,
+    /// JSONL file writer. None if file writing failed to initialize.
+    file_writer: Arc<RwLock<Option<SessionFileWriter>>>,
     runner: SharedInputRunner,
 }
 
 impl Session {
-    pub fn new(conversation_id: String, runner: SharedInputRunner) -> Arc<Self> {
+    pub fn new(
+        conversation_id: String,
+        runner: SharedInputRunner,
+        sessions_dir: PathBuf,
+    ) -> Arc<Self> {
+        let file_writer = match SessionFileWriter::open(&sessions_dir, &conversation_id) {
+            Ok(w) => {
+                tracing::info!(
+                    "Opened session file for {}: {}",
+                    conversation_id,
+                    w.path().display()
+                );
+                Some(w)
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to open session file for {}: {}",
+                    conversation_id,
+                    e
+                );
+                None
+            }
+        };
         let session = Arc::new(Self {
             conversation_id,
             queue: Arc::new(RwLock::new(VecDeque::new())),
@@ -34,6 +60,7 @@ impl Session {
             current: Arc::new(RwLock::new(None)),
             seq_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             output_subscribers: Arc::new(RwLock::new(Vec::new())),
+            file_writer: Arc::new(RwLock::new(file_writer)),
             runner,
         });
         session.spawn_processor();
@@ -138,12 +165,20 @@ impl Session {
     }
 
     /// Emit a record to all three sinks: UI events, file, subscribers.
-    /// For Phase 1, only subscribers are wired; UI events and file writing are
-    /// added in later phases.
+    /// For Phase 3, file + subscribers are wired; UI events are emitted by
+    /// the runner (agent.rs) directly via Tauri's app.emit.
     pub async fn emit_output(&self, mut record: SessionRecord) {
         record.seq = self
             .seq_counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // 1. File (JSONL append)
+        let file_writer = self.file_writer.read().await;
+        if let Some(ref writer) = *file_writer {
+            if let Err(e) = writer.append(&record) {
+                tracing::warn!("Failed to append session record: {}", e);
+            }
+        }
+        // 2. Subscribers (broadcast)
         let subs = self.output_subscribers.read().await;
         for tx in subs.iter() {
             let _ = tx.send(record.clone());
@@ -241,13 +276,15 @@ fn preview_content(s: &str) -> String {
 pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<Session>>>,
     runner: SharedInputRunner,
+    sessions_dir: PathBuf,
 }
 
 impl SessionManager {
-    pub fn new(runner: SharedInputRunner) -> Self {
+    pub fn new(runner: SharedInputRunner, sessions_dir: PathBuf) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
             runner,
+            sessions_dir,
         }
     }
 
@@ -264,7 +301,11 @@ impl SessionManager {
         if let Some(s) = sessions.get(conversation_id) {
             return Arc::clone(s);
         }
-        let session = Session::new(conversation_id.to_string(), Arc::clone(&self.runner));
+        let session = Session::new(
+            conversation_id.to_string(),
+            Arc::clone(&self.runner),
+            self.sessions_dir.clone(),
+        );
         sessions.insert(conversation_id.to_string(), Arc::clone(&session));
         session
     }
@@ -272,6 +313,11 @@ impl SessionManager {
     /// Get an existing session (None if not yet created).
     pub async fn get(&self, conversation_id: &str) -> Option<Arc<Session>> {
         self.sessions.read().await.get(conversation_id).cloned()
+    }
+
+    /// Sessions directory (where `.session` files live).
+    pub fn sessions_dir(&self) -> &PathBuf {
+        &self.sessions_dir
     }
 
     /// Enqueue an input. Creates the session if needed.
@@ -304,6 +350,25 @@ impl SessionManager {
             session.list_queue().await
         } else {
             Vec::new()
+        }
+    }
+
+    /// Read session history from the `.session` file.
+    pub fn get_history(
+        &self,
+        conversation_id: &str,
+        limit: Option<usize>,
+    ) -> std::io::Result<Vec<SessionRecord>> {
+        match limit {
+            Some(n) => crate::file_writer::SessionFileReader::read_last(
+                &self.sessions_dir,
+                conversation_id,
+                n,
+            ),
+            None => crate::file_writer::SessionFileReader::read_all(
+                &self.sessions_dir,
+                conversation_id,
+            ),
         }
     }
 }

@@ -8,10 +8,11 @@ use crate::AppState;
 use aqbot_core::types::AttachmentInput;
 use aqbot_session::{
     make_blocking_request, InputHandle, InputHandleInfo, InputRunner, InputRunContext,
-    InputSource, SessionManager,
+    InputSource, SessionManager, SessionRecord,
 };
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
@@ -166,8 +167,23 @@ pub async fn session_list_queue(
     Ok(state.session_manager.list_queue(&conversation_id).await)
 }
 
+/// Read session history from the `.session` file. Returns up to `limit`
+/// most recent records (or all if limit is None).
+#[tauri::command]
+pub async fn session_get_history(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<SessionRecord>, String> {
+    state
+        .session_manager
+        .get_history(&conversation_id, limit)
+        .map_err(|e| e.to_string())
+}
+
 /// Convenience constructor for AppState setup.
-pub fn new_manager(app: AppHandle) -> Arc<SessionManager> {
+pub fn new_manager(app: AppHandle, app_data_dir: PathBuf) -> Arc<SessionManager> {
     let runner: Arc<dyn InputRunner> = Arc::new(AgentInputRunner { app });
-    Arc::new(SessionManager::new(runner))
+    let sessions_dir = app_data_dir.join("sessions");
+    Arc::new(SessionManager::new(runner, sessions_dir))
 }

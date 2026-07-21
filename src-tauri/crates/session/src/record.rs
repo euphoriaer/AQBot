@@ -23,6 +23,17 @@ pub enum SessionRecordRole {
     System,
 }
 
+impl SessionRecordRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SessionRecordRole::User => "user",
+            SessionRecordRole::Assistant => "assistant",
+            SessionRecordRole::Tool => "tool",
+            SessionRecordRole::System => "system",
+        }
+    }
+}
+
 /// A single record emitted by a Session. Written to:
 /// 1. UI via Tauri events
 /// 2. `.session` JSONL file

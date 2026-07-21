@@ -4,11 +4,13 @@
 //! + file + subscribers). Inputs are FIFO-queued per session; each input gets
 //! a handle that can be cancelled from the UI or by another session.
 
+mod file_writer;
 mod input;
 mod manager;
 mod record;
 mod runner;
 
+pub use file_writer::{SessionFileReader, SessionFileWriter};
 pub use input::{
     InputHandle, InputHandleInfo, InputRequest, InputSource, InputStatus,
 };
