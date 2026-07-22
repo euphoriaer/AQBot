@@ -1034,16 +1034,17 @@ export function InputArea() {
           textareaRef.current.style.height = 'auto';
         }
       });
+      // Record sent input to history for Up/Down arrow navigation.
+      // Must be before the await - otherwise history is empty during the agent run.
+      if (activeConversationId) {
+        pushInputHistory(activeConversationId, trimmed);
+      }
       if (currentMode === 'agent') {
         await sendAgentMessage(trimmed, attachments);
       } else if (companionModels.length > 0) {
         await sendMultiModelMessage(trimmed, companionModels, attachments, searchEnabled ? searchProviderId : null);
       } else {
         await sendMessage(trimmed, attachments, searchEnabled ? searchProviderId : null);
-      }
-      // Record sent input to history for Up/Down arrow navigation
-      if (activeConversationId) {
-        pushInputHistory(activeConversationId, trimmed);
       }
     } catch (e) {
       setValue((current) => current || trimmed);

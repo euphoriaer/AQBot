@@ -495,6 +495,7 @@ pub fn run() {
         commands::session::session_enqueue_input,
         commands::session::session_cancel_input,
         commands::session::session_cancel_active,
+        commands::session::session_cancel_all,
         commands::session::session_list_queue,
         commands::session::session_get_history,
         // skills

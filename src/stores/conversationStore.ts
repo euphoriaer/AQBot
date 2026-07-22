@@ -1746,7 +1746,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   cancelInput: async (handleId) => {
     const convId = get().activeConversationId;
     if (!convId) return;
-    // Remove from pending queue (if still queued) and reject its promise
+    // Remove from pending queue (if still queued) and resolve its promise.
+    // Resolve (not reject) because cancellation is intentional - we don't
+    // want the handleSend catch block to show an error toast.
     const queue = _pendingAgentInputs[convId];
     if (queue) {
       const idx = queue.findIndex((p) => p.handle_id === handleId);
@@ -1755,7 +1757,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (queue.length === 0) {
           delete _pendingAgentInputs[convId];
         }
-        removed.reject(new Error('Cancelled'));
+        removed.resolve();
       }
     }
     try {
@@ -4500,7 +4502,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       // Also cancel the agent if in agent mode
       const conv = get().conversations.find((c) => c.id === conversationId);
       if (conv?.mode === 'agent') {
+        // Cancel the running agent + all queued inputs, and clear the
+        // frontend pending queue so queued inputs don't show later.
         invoke('agent_cancel', { conversationId }).catch(() => {});
+        invoke('session_cancel_all', { conversationId }).catch(() => {});
+        const pending = _pendingAgentInputs[conversationId];
+        if (pending) {
+          for (const p of pending) p.resolve();
+          delete _pendingAgentInputs[conversationId];
+        }
       }
     }
     // Mark the current streaming message as partial

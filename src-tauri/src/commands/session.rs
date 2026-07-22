@@ -184,6 +184,19 @@ pub async fn session_cancel_active(
     Ok(cancelled)
 }
 
+/// Cancel the running input AND all queued inputs for a conversation.
+/// Returns the number of inputs cancelled.
+#[tauri::command]
+pub async fn session_cancel_all(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<usize, String> {
+    let count = state.session_manager.cancel_all(&conversation_id).await;
+    emit_queue_updated(&app, &conversation_id);
+    Ok(count)
+}
+
 /// List the queue (running + queued) for a conversation.
 #[tauri::command]
 pub async fn session_list_queue(

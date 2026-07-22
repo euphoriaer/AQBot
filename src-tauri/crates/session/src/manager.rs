@@ -143,6 +143,32 @@ impl Session {
         false
     }
 
+    /// Cancel the running input AND all queued inputs. Returns total cancelled count.
+    pub async fn cancel_all(&self) -> usize {
+        let mut count = 0;
+        // Cancel running input
+        {
+            let current = self.current.read().await;
+            if let Some(req) = current.as_ref() {
+                req.cancel_token.cancel();
+                count += 1;
+            }
+        }
+        // Drain and cancel all queued inputs
+        let mut q = self.queue.write().await;
+        for req in q.drain(..) {
+            req.cancel_token.cancel();
+            *req.status.write().await = InputStatus::Cancelled;
+            signal_done(&req, Err("cancelled".to_string()));
+            count += 1;
+        }
+        drop(q);
+        if count > 0 {
+            notify_queue_changed(&self.on_queue_changed, &self.conversation_id);
+        }
+        count
+    }
+
     /// List all inputs: queued + currently running. Done/Failed/Cancelled inputs
     /// are not retained (they're dropped after completion).
     pub async fn list_queue(&self) -> Vec<InputHandleInfo> {
@@ -373,6 +399,15 @@ impl SessionManager {
             session.cancel_active().await
         } else {
             false
+        }
+    }
+
+    /// Cancel the running input AND all queued inputs for a conversation.
+    pub async fn cancel_all(&self, conversation_id: &str) -> usize {
+        if let Some(session) = self.get(conversation_id).await {
+            session.cancel_all().await
+        } else {
+            0
         }
     }
 
