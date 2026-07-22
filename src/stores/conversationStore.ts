@@ -57,6 +57,13 @@ let _sessionOutputUnlisten: UnlistenFn | null = null;
 let _sessionAutoStartUnlisten: UnlistenFn | null = null;
 let _sessionCancelUnlisten: UnlistenFn | null = null;
 let _sessionQueueUpdatedUnlisten: UnlistenFn | null = null;
+// Per-conversation FIFO queue of pending agent inputs waiting for their turn.
+// Inputs are added here on enqueue and consumed (one at a time, in order) when
+// the backend emits `agent-message-id` signaling the input has started running.
+// This prevents queued inputs from showing optimistic user messages / waiting
+// UI before the previous input finishes.
+const _pendingAgentInputs: Record<string, PendingAgentInput[]> = {};
+let _agentMessageIdUnlisten: UnlistenFn | null = null;
 // Generation counter to prevent stale listeners from processing events
 // (fixes React StrictMode double-effect causing duplicate stream processing)
 let _listenerGen = 0;
@@ -1354,6 +1361,8 @@ interface ConversationState {
    *  Optionally accept a target conversation ID so that remote/session-interop
    *  inputs can target a non-active conversation without switching the UI. */
   sendAgentMessage: (content: string, attachments?: AttachmentInput[], targetConversationId?: string) => Promise<void>;
+  /** Internal: start rendering an agent input that has just begun processing. */
+  _startAgentInputRun: (pending: PendingAgentInput, realAssistantId: string) => void;
   regenerateMessage: (targetMessageId?: string) => Promise<Message>;
   regenerateWithModel: (
     targetMessageId: string,
@@ -1419,6 +1428,12 @@ interface ConversationState {
   cancelInput: (handleId: string) => Promise<void>;
 }
 
+/** Mirror of aqbot_session::input::InputHandle. */
+export interface InputHandle {
+  handle_id: string;
+  conversation_id: string;
+}
+
 /** Mirror of aqbot_session::input::InputHandleInfo. */
 export interface InputHandleInfo {
   handle_id: string;
@@ -1436,6 +1451,18 @@ export interface InputHandleInfo {
     | { state: 'Failed'; detail: string };
   preview: string;
   enqueued_at: number;
+}
+
+/** A queued agent input waiting for its turn to be displayed/processed. */
+interface PendingAgentInput {
+  handle_id: string;
+  conversationId: string;
+  content: string;
+  attachments: AttachmentInput[];
+  providerId: string;
+  modelId: string;
+  resolve: () => void;
+  reject: (e: Error) => void;
 }
 
 function appendStreamChunk(
@@ -1719,6 +1746,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   cancelInput: async (handleId) => {
     const convId = get().activeConversationId;
     if (!convId) return;
+    // Remove from pending queue (if still queued) and reject its promise
+    const queue = _pendingAgentInputs[convId];
+    if (queue) {
+      const idx = queue.findIndex((p) => p.handle_id === handleId);
+      if (idx >= 0) {
+        const [removed] = queue.splice(idx, 1);
+        if (queue.length === 0) {
+          delete _pendingAgentInputs[convId];
+        }
+        removed.reject(new Error('Cancelled'));
+      }
+    }
     try {
       await invoke('session_cancel_input', { conversationId: convId, handleId });
     } catch (e) {
@@ -2731,20 +2770,58 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (!conversationId) throw new Error('No active conversation');
     if (get().loading) throw new Error('Conversation messages are still loading');
 
-    // Only cancel an existing run in THIS conversation. Other conversations
-    // may be running in parallel and must not be disturbed.
-    getActiveAgentCancel(conversationId)?.();
-    setActiveAgentCancel(conversationId, null);
-    const agentRunSeq = bumpAgentRunSeq(conversationId);
-    const isCurrentAgentRun = () => agentRunSeq === agentRunSeqFor(conversationId);
-
     const conversation = get().conversations.find((c) => c.id === conversationId);
     if (!conversation) throw new Error('Conversation not found');
 
     const providerId = conversation.provider_id;
     const modelId = conversation.model_id;
 
-    // Optimistic user message
+    // Enqueue first. The backend returns a handle immediately and processes
+    // the input in FIFO order. We do NOT create optimistic UI messages here -
+    // that happens in `_startAgentInputRun`, triggered by the global
+    // `agent-message-id` listener when this input reaches the front of the
+    // queue and the backend actually starts the agent run. This way, queued
+    // inputs don't show a "waiting" state in the main window; they appear
+    // only when the previous run finishes, just like asking again.
+    const handle = await invoke<InputHandle>('session_enqueue_input', {
+      request: {
+        conversation_id: conversationId,
+        content,
+        attachments: attachments ?? [],
+        provider_id: providerId,
+        model_id: modelId,
+        remote: false,
+      },
+    });
+
+    return new Promise<void>((resolve, reject) => {
+      const pending: PendingAgentInput = {
+        handle_id: handle.handle_id,
+        conversationId,
+        content,
+        attachments,
+        providerId,
+        modelId,
+        resolve,
+        reject,
+      };
+      _pendingAgentInputs[conversationId] = [
+        ...(_pendingAgentInputs[conversationId] ?? []),
+        pending,
+      ];
+    });
+  },
+
+  _startAgentInputRun: (pending, realAssistantId) => {
+    const { conversationId, content, attachments, providerId, modelId, resolve, reject } = pending;
+
+    getActiveAgentCancel(conversationId)?.();
+    setActiveAgentCancel(conversationId, null);
+    const agentRunSeq = bumpAgentRunSeq(conversationId);
+    const isCurrentAgentRun = () => agentRunSeq === agentRunSeqFor(conversationId);
+
+    const conversation = get().conversations.find((c) => c.id === conversationId);
+
     const optimisticUserMsg: Message = {
       id: `temp-user-${Date.now()}`,
       conversation_id: conversationId,
@@ -2771,8 +2848,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       status: 'complete',
     };
 
-    // Placeholder assistant message
-    let currentMsgId = `temp-agent-${Date.now()}`;
+    const currentMsgId = realAssistantId;
     const placeholderAssistant: Message = {
       id: currentMsgId,
       conversation_id: conversationId,
@@ -2810,16 +2886,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       },
     }));
 
-    // Set up event listeners BEFORE invoking to avoid race conditions
     let unlistenDone: UnlistenFn | null = null;
     let unlistenError: UnlistenFn | null = null;
     let unlistenStreamText: UnlistenFn | null = null;
     let unlistenStreamThinking: UnlistenFn | null = null;
-    let unlistenMessageId: UnlistenFn | null = null;
     let cancelActiveRun: (() => void) | null = null;
     let cleanedUp = false;
 
-    // ── Agent stream buffering (same pattern as Q&A _pendingUiChunk) ──
     let _agentPendingText = '';
     let _agentPendingThinking = '';
     let _agentFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2842,32 +2915,30 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         const updatedMessages = s.messages.map((m) => {
           if (m.id !== currentMsgId) return m;
 
-          let content = m.content || '';
+          let mContent = m.content || '';
           let thinking = m.thinking || '';
 
-          // 1. Process buffered thinking chunks first
           if (thinkingChunk) {
             if (!wasThinking) {
-              content += '<think data-aqbot="1">\n';
+              mContent += '<think data-aqbot="1">\n';
             }
-            content += thinkingChunk;
+            mContent += thinkingChunk;
             thinking += thinkingChunk;
             nextThinkingIds = new Set([...nextThinkingIds, currentMsgId]);
           }
 
-          // 2. Process buffered text chunks (closes thinking block if needed)
           if (textChunk) {
             const isCurrentlyThinking = thinkingChunk ? true : wasThinking;
             if (isCurrentlyThinking) {
-              content += '\n</think>\n\n';
+              mContent += '\n</think>\n\n';
               const n = new Set(nextThinkingIds);
               n.delete(currentMsgId);
               nextThinkingIds = n;
             }
-            content += textChunk;
+            mContent += textChunk;
           }
 
-          return { ...m, content, thinking };
+          return { ...m, content: mContent, thinking };
         });
 
         return {
@@ -2899,12 +2970,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       unlistenStreamThinking?.();
       unlistenDone?.();
       unlistenError?.();
-      unlistenMessageId?.();
       unlistenStreamText = null;
       unlistenStreamThinking = null;
       unlistenDone = null;
       unlistenError = null;
-      unlistenMessageId = null;
       if (getActiveAgentCancel(conversationId) === cancelActiveRun) {
         setActiveAgentCancel(conversationId, null);
       }
@@ -2919,49 +2988,28 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     };
 
     try {
-      const eventPromise = new Promise<void>((resolve, reject) => {
-        cancelActiveRun = () => {
-          if (isCurrentAgentRun()) {
-            bumpAgentRunSeq(conversationId);
-          }
-          cleanup();
-          resolve();
-        };
-        setActiveAgentCancel(conversationId, cancelActiveRun);
+      cancelActiveRun = () => {
+        if (isCurrentAgentRun()) {
+          bumpAgentRunSeq(conversationId);
+        }
+        cleanup();
+        resolve();
+      };
+      setActiveAgentCancel(conversationId, cancelActiveRun);
 
-        // Listen for the real assistant message ID from the backend
-        // This replaces the temp ID so tool call events can be matched
-        listen<{ conversationId: string; assistantMessageId: string }>('agent-message-id', (event) => {
-          if (event.payload.conversationId !== conversationId || !isCurrentAgentRun()) return;
-          // Flush pending buffer before switching IDs
-          flushAgentStreamChunks();
-          const realId = event.payload.assistantMessageId;
-          const oldId = currentMsgId;
-          currentMsgId = realId;
-          set((s) => ({
-            streamingMessageId: realId,
-            messages: s.messages.map((m) =>
-              m.id === oldId ? { ...m, id: realId } : m
-            ),
-          }));
-        }).then(keepAgentUnlisten((fn) => { unlistenMessageId = fn; }));
+      listen<AgentStreamTextEvent>('agent-stream-text', (event) => {
+        if (event.payload.conversationId !== conversationId || !isCurrentAgentRun()) return;
+        _agentPendingText += event.payload.text;
+        scheduleAgentFlush();
+      }).then(keepAgentUnlisten((fn) => { unlistenStreamText = fn; }));
 
-        // Listen for incremental text chunks — buffer and flush periodically
-        listen<AgentStreamTextEvent>('agent-stream-text', (event) => {
-          if (event.payload.conversationId !== conversationId || !isCurrentAgentRun()) return;
-          _agentPendingText += event.payload.text;
-          scheduleAgentFlush();
-        }).then(keepAgentUnlisten((fn) => { unlistenStreamText = fn; }));
+      listen<AgentStreamThinkingEvent>('agent-stream-thinking', (event) => {
+        if (event.payload.conversationId !== conversationId || !isCurrentAgentRun()) return;
+        _agentPendingThinking += event.payload.thinking;
+        scheduleAgentFlush();
+      }).then(keepAgentUnlisten((fn) => { unlistenStreamThinking = fn; }));
 
-        // Listen for incremental thinking chunks — buffer and flush periodically
-        listen<AgentStreamThinkingEvent>('agent-stream-thinking', (event) => {
-          if (event.payload.conversationId !== conversationId || !isCurrentAgentRun()) return;
-          _agentPendingThinking += event.payload.thinking;
-          scheduleAgentFlush();
-        }).then(keepAgentUnlisten((fn) => { unlistenStreamThinking = fn; }));
-
-        // Listen for agent-done — correction overwrite with final content
-        listen<AgentDoneEvent>('agent-done', (event) => {
+      listen<AgentDoneEvent>('agent-done', (event) => {
           if (event.payload.conversationId !== conversationId || !isCurrentAgentRun()) return;
           // Clear pending buffer (done event overwrites with final content)
           clearAgentStreamBuffer();
@@ -3067,29 +3115,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           cleanup();
           reject(new Error(event.payload.message));
         }).then(keepAgentUnlisten((fn) => { unlistenError = fn; }));
-      });
-
-      // Invoke the backend command (this creates the real user message in DB
-      // when the session queue picks up this input)
-      await invoke('session_enqueue_input', {
-        request: {
-          conversation_id: conversationId,
-          content,
-          attachments: attachments ?? [],
-          provider_id: providerId,
-          model_id: modelId,
-          remote: false,
-        },
-      });
-
-      // Wait for agent-done or agent-error event
-      await eventPromise;
     } catch (e) {
       cleanup();
       const errMsg = String(e);
-      console.error('[sendAgentMessage] error:', errMsg);
+      console.error('[_startAgentInputRun] error:', errMsg);
 
-      // If streaming is still true, the error came from invoke itself (not an event)
       if (isCurrentAgentRun()) {
         set((s) => {
           const nextRunning = { ...s.runningConversations };
@@ -3109,6 +3139,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           };
         });
       }
+      reject(e instanceof Error ? e : new Error(errMsg));
     }
   },
 
@@ -4368,6 +4399,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         },
       );
     }
+
+    if (!_agentMessageIdUnlisten) {
+      _agentMessageIdUnlisten = await listen<{ conversationId: string; assistantMessageId: string }>(
+        'agent-message-id',
+        (event) => {
+          const { conversationId, assistantMessageId } = event.payload;
+          // FIFO: the backend emits agent-message-id when it starts processing
+          // the next queued input. Take the head of the pending queue and
+          // start its UI run. This ensures queued inputs only show in the UI
+          // when they actually start running, not when they're enqueued.
+          const queue = _pendingAgentInputs[conversationId];
+          if (!queue || queue.length === 0) return;
+          const pending = queue.shift()!;
+          if (queue.length === 0) {
+            delete _pendingAgentInputs[conversationId];
+          }
+          get()._startAgentInputRun(pending, assistantMessageId);
+        },
+      );
+    }
   },
 
   stopSessionInteropListener: () => {
@@ -4390,6 +4441,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (_sessionQueueUpdatedUnlisten) {
       _sessionQueueUpdatedUnlisten();
       _sessionQueueUpdatedUnlisten = null;
+    }
+    if (_agentMessageIdUnlisten) {
+      _agentMessageIdUnlisten();
+      _agentMessageIdUnlisten = null;
     }
   },
 

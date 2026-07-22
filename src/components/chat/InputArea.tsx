@@ -80,6 +80,38 @@ async function fileToAttachmentInput(file: File): Promise<AttachmentInput> {
 // In-memory draft cache: persists input text per-conversation across component unmounts
 const _draftCache = new Map<string, string>();
 
+// Per-conversation input history for Up/Down arrow navigation.
+// entries: sent inputs, newest at end. cursor: -1 = not navigating,
+// 0..entries.length-1 = current position. draft: saved draft when nav started.
+interface InputHistoryState {
+  entries: string[];
+  cursor: number;
+  draft: string;
+}
+const _inputHistory = new Map<string, InputHistoryState>();
+
+function getInputHistory(convId: string): InputHistoryState {
+  let s = _inputHistory.get(convId);
+  if (!s) {
+    s = { entries: [], cursor: -1, draft: '' };
+    _inputHistory.set(convId, s);
+  }
+  return s;
+}
+
+function pushInputHistory(convId: string, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const s = getInputHistory(convId);
+  // Avoid duplicate consecutive entries
+  if (s.entries.length > 0 && s.entries[s.entries.length - 1] === trimmed) return;
+  s.entries.push(trimmed);
+  // Cap history to 100 entries
+  if (s.entries.length > 100) s.entries.shift();
+  s.cursor = -1;
+  s.draft = '';
+}
+
 export function InputArea() {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -278,6 +310,12 @@ export function InputArea() {
       const draft = valueRef.current;
       if (draft) _draftCache.set(prev, draft);
       else _draftCache.delete(prev);
+      // Reset history navigation cursor for the previous conversation
+      const prevHist = _inputHistory.get(prev);
+      if (prevHist) {
+        prevHist.cursor = -1;
+        prevHist.draft = '';
+      }
     }
     setValue(next ? _draftCache.get(next) || '' : '');
     prevConvIdRef.current = next;
@@ -1003,6 +1041,10 @@ export function InputArea() {
       } else {
         await sendMessage(trimmed, attachments, searchEnabled ? searchProviderId : null);
       }
+      // Record sent input to history for Up/Down arrow navigation
+      if (activeConversationId) {
+        pushInputHistory(activeConversationId, trimmed);
+      }
     } catch (e) {
       setValue((current) => current || trimmed);
       setAttachedFiles((current) => (current.length > 0 ? current : submittedFiles));
@@ -1194,9 +1236,70 @@ export function InputArea() {
         e.preventDefault();
         e.stopPropagation();
         handleSend();
+        return;
+      }
+      // Up/Down arrow: navigate input history (like terminal)
+      // Only when no modifier keys (shift/ctrl/alt/meta) are held, so that
+      // multi-line cursor movement still works with modifiers.
+      if (activeConversationId && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        const textarea = e.currentTarget;
+        const s = getInputHistory(activeConversationId);
+        if (e.key === 'ArrowUp') {
+          if (s.entries.length === 0) return;
+          // Only navigate when on the first line (no newline before cursor)
+          const atFirstLine = !textarea.value.slice(0, textarea.selectionStart).includes('\n');
+          if (!atFirstLine) return;
+          e.preventDefault();
+          if (s.cursor === -1) {
+            s.draft = textarea.value;
+            s.cursor = s.entries.length - 1;
+          } else if (s.cursor > 0) {
+            s.cursor -= 1;
+          } else {
+            return; // already at oldest
+          }
+          const entry = s.entries[s.cursor];
+          setValue(entry);
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current;
+            if (ta) {
+              ta.style.height = 'auto';
+              const desired = hasUserResizedRef.current
+                ? userMinHeightRef.current
+                : Math.max(ta.scrollHeight, userMinHeightRef.current);
+              ta.style.height = Math.min(desired, ABSOLUTE_MAX_HEIGHT) + 'px';
+            }
+          });
+        } else if (e.key === 'ArrowDown') {
+          if (s.cursor === -1) return;
+          // Only navigate when on the last line (no newline after cursor)
+          const atLastLine = !textarea.value.slice(textarea.selectionEnd).includes('\n');
+          if (!atLastLine) return;
+          e.preventDefault();
+          if (s.cursor < s.entries.length - 1) {
+            s.cursor += 1;
+            const entry = s.entries[s.cursor];
+            setValue(entry);
+          } else {
+            // Restore draft and exit navigation
+            s.cursor = -1;
+            setValue(s.draft);
+            s.draft = '';
+          }
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current;
+            if (ta) {
+              ta.style.height = 'auto';
+              const desired = hasUserResizedRef.current
+                ? userMinHeightRef.current
+                : Math.max(ta.scrollHeight, userMinHeightRef.current);
+              ta.style.height = Math.min(desired, ABSOLUTE_MAX_HEIGHT) + 'px';
+            }
+          });
+        }
       }
     },
-    [handleSend, settings],
+    [handleSend, settings, activeConversationId],
   );
 
   // Auto-resize textarea: height = max(userMinHeight, contentHeight), capped at ABSOLUTE_MAX
