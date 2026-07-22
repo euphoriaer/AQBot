@@ -25,6 +25,7 @@ pub mod s3;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod settings_control;
 pub mod skills;
 pub mod storage;
 pub mod webdav;

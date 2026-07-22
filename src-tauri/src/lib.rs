@@ -13,6 +13,9 @@ use std::os::unix::fs::PermissionsExt;
 
 use std::path::PathBuf;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 #[derive(Clone)]
 pub struct StreamCancelEntry {
     pub conversation_id: String,
@@ -1114,9 +1117,11 @@ pub fn run() {
                          点击「确定」打开下载页面进行安装，安装完成后重新启动 AQBot。",
                     );
                     if user_ok {
-                        let _ = std::process::Command::new("cmd")
-                            .args(["/c", "start", "https://developer.microsoft.com/en-us/microsoft-edge/webview2/?form=MA13LH#download"])
-                            .spawn();
+                        let mut cmd = std::process::Command::new("cmd");
+                        cmd.args(["/c", "start", "https://developer.microsoft.com/en-us/microsoft-edge/webview2/?form=MA13LH#download"]);
+                        #[cfg(windows)]
+                        cmd.creation_flags(0x08000000);
+                        let _ = cmd.spawn();
                     }
                 } else {
                     windows_utils::show_error_dialog(

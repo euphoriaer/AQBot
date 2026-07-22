@@ -100,6 +100,18 @@ function AppInner() {
     return () => stopSessionInterop();
   }, [startSessionInterop, stopSessionInterop]);
 
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    void (async () => {
+      const { startSettingsSync, stopSettingsSync } = await import('./stores/_settingsSync');
+      if (cancelled) return;
+      await startSettingsSync();
+      return () => stopSettingsSync();
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => setupAgentEventListeners(), []);
 
   // Auto-check for updates on startup and periodically

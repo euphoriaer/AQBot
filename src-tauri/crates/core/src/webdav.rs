@@ -5,6 +5,9 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use zip::write::SimpleFileOptions;
 
 use crate::error::{AQBotError, Result};
@@ -687,8 +690,10 @@ where
 // === Internal Helpers ===
 
 fn get_hostname() -> String {
-    std::process::Command::new("hostname")
-        .output()
+    let mut cmd = std::process::Command::new("hostname");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    cmd.output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())

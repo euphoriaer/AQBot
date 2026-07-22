@@ -478,6 +478,10 @@ pub async fn get_gateway_metrics(state: State<'_, AppState>) -> Result<GatewayMe
 
 #[tauri::command]
 pub async fn start_gateway(state: State<'_, AppState>) -> Result<(), String> {
+    start_gateway_inner(&state).await
+}
+
+pub async fn start_gateway_inner(state: &AppState) -> Result<(), String> {
     {
         let gw = state.gateway.lock().await;
         if gw.as_ref().map_or(false, |s| s.is_running()) {
@@ -485,7 +489,7 @@ pub async fn start_gateway(state: State<'_, AppState>) -> Result<(), String> {
         }
     }
 
-    let settings = load_gateway_runtime_settings(&state).await?;
+    let settings = load_gateway_runtime_settings(state).await?;
     validate_ssl_settings(&settings)?;
 
     let mut gw = state.gateway.lock().await;
@@ -502,8 +506,8 @@ pub async fn start_gateway(state: State<'_, AppState>) -> Result<(), String> {
         Some(aqbot_gateway::server::GatewaySslConfig {
             ssl_port: settings.ssl_port,
             tls: aqbot_gateway::server::GatewayTlsConfig {
-                cert_path: settings.ssl_cert_path.unwrap_or_default(),
-                key_path: settings.ssl_key_path.unwrap_or_default(),
+                cert_path: settings.ssl_cert_path.clone().unwrap_or_default(),
+                key_path: settings.ssl_key_path.clone().unwrap_or_default(),
             },
         })
     } else {
@@ -522,7 +526,10 @@ pub async fn start_gateway(state: State<'_, AppState>) -> Result<(), String> {
     // addresses in host:port/conversation_id format.
     {
         let host = gateway_client_host(&settings.listen_address);
-        state.session_registry.set_gateway_address(&host, settings.port).await;
+        state
+            .session_registry
+            .set_gateway_address(&host, settings.port)
+            .await;
     }
 
     let server = aqbot_gateway::server::GatewayServer::start(
@@ -541,6 +548,10 @@ pub async fn start_gateway(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn stop_gateway(state: State<'_, AppState>) -> Result<(), String> {
+    stop_gateway_inner(&state).await
+}
+
+pub async fn stop_gateway_inner(state: &AppState) -> Result<(), String> {
     let mut gw = state.gateway.lock().await;
     if let Some(mut server) = gw.take() {
         server.stop().await.map_err(|e| e.to_string())?;
@@ -550,6 +561,10 @@ pub async fn stop_gateway(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_gateway_status(state: State<'_, AppState>) -> Result<GatewayStatus, String> {
+    get_gateway_status_inner(&state).await
+}
+
+pub async fn get_gateway_status_inner(state: &AppState) -> Result<GatewayStatus, String> {
     // Extract live addresses while holding the lock, then drop it before the
     // async settings fetch.
     struct LiveInfo {

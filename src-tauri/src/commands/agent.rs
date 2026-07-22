@@ -1609,6 +1609,11 @@ pub async fn agent_query(
 
         
 
+        let settings_control_fn = crate::commands::settings_control::build_settings_control_fn(
+            app.clone(),
+            state.sea_db.clone(),
+        );
+
         let agent_options = AgentOptions {
         model: Some(model_id.clone()),
         provider: Some(Arc::new(bridge)),
@@ -1617,6 +1622,7 @@ pub async fn agent_query(
         skills_summary,
         ask_fn: Some(ask_fn),
         connect_fn: Some(connect_fn),
+        settings_control_fn: Some(settings_control_fn),
         can_use_tool: Some(can_use_tool),
         custom_tools: vec![skill_tool, skill_manager],
         abort_signal: Some(cancel_token.clone()),
