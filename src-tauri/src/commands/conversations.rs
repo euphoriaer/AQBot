@@ -1632,10 +1632,11 @@ pub async fn create_conversation(
     model_id: String,
     provider_id: String,
     system_prompt: Option<String>,
+    parent_conversation_id: Option<String>,
 ) -> Result<Conversation, String> {
     let real_provider_id = resolve_command_provider_id(&state.sea_db, &provider_id).await?;
 
-    aqbot_core::repo::conversation::create_conversation(
+    let conversation = aqbot_core::repo::conversation::create_conversation(
         &state.sea_db,
         &title,
         &model_id,
@@ -1643,7 +1644,19 @@ pub async fn create_conversation(
         system_prompt.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    if let Some(parent_id) = parent_conversation_id {
+        let update_input = UpdateConversationInput {
+            parent_conversation_id: Some(Some(parent_id)),
+            ..Default::default()
+        };
+        aqbot_core::repo::conversation::update_conversation(&state.sea_db, &conversation.id, update_input)
+            .await
+            .map_err(|e| e.to_string())
+    } else {
+        Ok(conversation)
+    }
 }
 
 #[tauri::command]

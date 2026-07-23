@@ -56,6 +56,8 @@ interface ConversationListProps {
   onGroupToggle: (group: string) => void
   nativeGroupable: GroupableProps
   scrollElementRef: RefObject<HTMLElement | null>
+  sortTargetId?: string | null
+  sortTargetZone?: number
 }
 
 function toNativeItems(
@@ -112,6 +114,8 @@ interface VirtualConversationItemProps {
   menu?: ConversationMenuFactory
   onClick: ConversationListProps['onActiveChange']
   style: React.CSSProperties
+  sortTargetId?: string | null
+  sortTargetZone?: number
 }
 
 /**
@@ -127,6 +131,8 @@ function VirtualConversationItem({
   menu,
   onClick,
   style,
+  sortTargetId,
+  sortTargetZone = 0.5,
 }: VirtualConversationItemProps) {
   const [menuArmed, setMenuArmed] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -145,6 +151,10 @@ function VirtualConversationItem({
     style: itemStyle,
     ...domProps
   } = info
+
+  const isSortTarget = sortTargetId === String(info.key)
+  const showInsertTop = isSortTarget && sortTargetZone < 0.5
+  const showInsertBottom = isSortTarget && sortTargetZone >= 0.5
 
   const triggerNode = (
     <EllipsisOutlined onClick={stopPropagation} className={`${prefixCls}-menu-icon`} />
@@ -184,6 +194,34 @@ function VirtualConversationItem({
           </Dropdown>
         </div>
       )}
+      {showInsertTop && (
+        <span
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: 'var(--color-primary, #1677ff)',
+            borderRadius: 1,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      {showInsertBottom && (
+        <span
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: 'var(--color-primary, #1677ff)',
+            borderRadius: 1,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
     </li>
   )
 }
@@ -197,6 +235,8 @@ function VirtualConversationList({
   renderGroupLabel,
   onGroupToggle,
   scrollElementRef,
+  sortTargetId,
+  sortTargetZone,
 }: Omit<ConversationListProps, 'nativeGroupable'>) {
   const { token } = theme.useToken()
   const { getPrefixCls, direction } = useXProviderContext()
@@ -300,6 +340,8 @@ function VirtualConversationList({
             direction={direction}
             menu={menu}
             onClick={onActiveChange}
+            sortTargetId={sortTargetId}
+            sortTargetZone={sortTargetZone}
             style={{
               ...style,
             }}

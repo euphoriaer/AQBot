@@ -421,7 +421,7 @@ pub struct ConversationSummary {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateConversationInput {
     pub title: Option<String>,
     pub provider_id: Option<String>,

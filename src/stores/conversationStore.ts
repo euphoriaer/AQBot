@@ -1346,7 +1346,7 @@ interface ConversationState {
     title: string,
     modelId: string,
     providerId: string,
-    options?: { categoryId?: string | null },
+    options?: { categoryId?: string | null; parentConversationId?: string },
   ) => Promise<Conversation>;
   updateConversation: (id: string, input: UpdateConversationInput) => Promise<void>;
   reorderConversations: (conversationIds: string[]) => Promise<void>;
@@ -2280,6 +2280,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         modelId: templateModelId,
         providerId: templateProviderId,
         systemPrompt: category?.system_prompt ?? undefined,
+        parentConversationId: options?.parentConversationId ?? null,
       });
       let conversation = createdConversation;
       try {

@@ -16,6 +16,7 @@
   "chat": {
     "newConversation": "新建对话",
     "newConversationInCurrentCategory": "在 {{category}} 下新建",
+    "newChildConversation": "新建子会话",
     "newStandaloneConversation": "独立新建",
     "expandSidebar": "展开左侧对话栏",
     "collapseSidebar": "折叠左侧对话栏",

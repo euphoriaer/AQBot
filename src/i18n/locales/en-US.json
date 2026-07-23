@@ -16,6 +16,7 @@
   "chat": {
     "newConversation": "New Conversation",
     "newConversationInCurrentCategory": "New in {{category}}",
+    "newChildConversation": "New child conversation",
     "newStandaloneConversation": "New standalone",
     "expandSidebar": "Expand chat sidebar",
     "collapseSidebar": "Collapse chat sidebar",

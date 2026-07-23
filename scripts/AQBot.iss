@@ -2,7 +2,7 @@
 ; 用于 Tauri v2 Windows 桌面应用
 
 #define MyAppName "AQBot"
-#define MyAppVersion "0.0.106"
+#define MyAppVersion "0.0.107"
 #define MyAppPublisher "AQBot-Desktop"
 #define MyAppURL "https://github.com/AQBot-Desktop/AQBot"
 #define MyAppExeName "AQBot.exe"

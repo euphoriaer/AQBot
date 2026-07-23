@@ -1,6 +1,7 @@
-import { useState, useMemo, useCallback, useEffect, useRef, memo, createContext, useContext } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef, memo, createContext } from 'react'
 import { Button, Input, App, theme, Tooltip, Avatar, Checkbox, Dropdown, Empty } from 'antd'
-import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, ChevronRight, MessageSquareText, Sparkles } from 'lucide-react'
+import { RightOutlined } from '@ant-design/icons'
+import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, MessageSquareText, Sparkles } from 'lucide-react'
 import { getConvIcon } from '@/lib/convIcon'
 import { exportAsMarkdown, exportAsText, exportAsPNG, exportAsJSON } from '@/lib/exportChat'
 import { invoke } from '@/lib/invoke'
@@ -14,7 +15,7 @@ import { useResolvedAvatarSrc } from '@/hooks/useResolvedAvatarSrc'
 import type { AvatarType } from '@/stores/userProfileStore'
 import { CategoryEditModal, type CategoryEditFormData } from './CategoryEditModal'
 import { ConversationModelIcon } from './ConversationModelIcon'
-import { ConversationList, type ConversationMenuFactory } from './ConversationList'
+import { ConversationList } from './ConversationList'
 import { ArchivedConversationList } from './ArchivedConversationList'
 import {
   buildConversationRows,
@@ -26,6 +27,7 @@ import { usePageSuspendCleanup } from '@/components/layout/PageLifecycle'
 import {
   DndContext,
   closestCenter,
+  pointerWithin,
   PointerSensor,
   useSensor,
   useSensors,
@@ -36,6 +38,7 @@ import {
   type DragStartEvent,
   type DragOverEvent,
   type ClientRect,
+  type CollisionDetection,
 } from '@dnd-kit/core'
 
 function ConversationTitleText({ title, className = '' }: { title: string; className?: string }) {
@@ -224,9 +227,15 @@ function SortableCategoryLabel({
   )
 }
 
-const DragZoneContext = createContext<{ overConvId: string | null; zone: number }>({
+type DragZoneInfo = {
+  overConvId: string | null
+  zone: number
+  mode: 'nest' | 'sort' | null
+}
+const DragZoneContext = createContext<DragZoneInfo>({
   overConvId: null,
   zone: 0.5,
+  mode: null,
 })
 
 function SortableConversationLabel({
@@ -238,17 +247,11 @@ function SortableConversationLabel({
 }) {
   const dragId = `conv:${conversation.id}`
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id: dragId })
-  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: dragId })
-  const { overConvId, zone } = useContext(DragZoneContext)
+  const { setNodeRef: setDropRef } = useDroppable({ id: dragId })
   const mergedRef = useCallback((node: HTMLSpanElement | null) => {
     setDragRef(node)
     setDropRef(node)
   }, [setDragRef, setDropRef])
-
-  const isZoneTarget = isOver && overConvId === conversation.id
-  const showBefore = isZoneTarget && zone < 0.25
-  const showAfter = isZoneTarget && zone > 0.75
-  const showNest = isZoneTarget && zone >= 0.25 && zone <= 0.75
 
   return (
     <span
@@ -256,43 +259,10 @@ function SortableConversationLabel({
       className="aqbot-chat-conversation-label"
       style={{
         opacity: isDragging ? 0.3 : 1,
-        position: 'relative',
-        outline: showNest ? `1px dashed var(--color-primary, #1677ff)` : 'none',
-        outlineOffset: '-1px',
-        borderRadius: 4,
-        background: showNest ? 'var(--color-primary-bg, rgba(22, 119, 255, 0.08))' : 'transparent',
       }}
       {...attributes}
       {...listeners}
     >
-      {showBefore && (
-        <span
-          style={{
-            position: 'absolute',
-            top: -1,
-            left: 0,
-            right: 0,
-            height: 2,
-            background: 'var(--color-primary, #1677ff)',
-            borderRadius: 1,
-            pointerEvents: 'none',
-          }}
-        />
-      )}
-      {showAfter && (
-        <span
-          style={{
-            position: 'absolute',
-            bottom: -1,
-            left: 0,
-            right: 0,
-            height: 2,
-            background: 'var(--color-primary, #1677ff)',
-            borderRadius: 1,
-            pointerEvents: 'none',
-          }}
-        />
-      )}
       {children}
     </span>
   )
@@ -321,6 +291,41 @@ function DroppableGroupLabel({
       {label}
     </span>
   )
+}
+
+/**
+ * 图标区域设置为"拖成子会话"的落点区（nest）。
+ * 拖到图标上直接成为该会话的子会话。
+ */
+function IconNestDroppable({
+  conversationId,
+  children,
+}: {
+  conversationId: string
+  children: React.ReactNode
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `nest:${conversationId}` })
+  return (
+    <span
+      ref={setNodeRef}
+      style={{
+        display: 'inline-flex',
+        outline: isOver ? `1px dashed var(--color-primary, #1677ff)` : 'none',
+        outlineOffset: -1,
+        borderRadius: 4,
+        background: isOver ? 'var(--color-primary-bg, rgba(22, 119, 255, 0.08))' : 'transparent',
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
+const collisionDetectionWithNest: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args)
+  const nestCollision = pointerCollisions.find(c => String(c.id).startsWith('nest:'))
+  if (nestCollision) return [nestCollision]
+  return closestCenter(args)
 }
 
 export function ChatSidebar() {
@@ -374,6 +379,7 @@ export function ChatSidebar() {
   const [activeDragConvId, setActiveDragConvId] = useState<string | null>(null)
   const [dragOverConvId, setDragOverConvId] = useState<string | null>(null)
   const [dragOverZone, setDragOverZone] = useState<number>(0.5)
+  const [dragOverMode, setDragOverMode] = useState<'nest' | 'sort' | null>(null)
   const dragInitialOrderRef = useRef<string[]>([])
 
   const isAncestorConversation = useCallback(
@@ -411,6 +417,13 @@ export function ChatSidebar() {
     const activeId = String(active.id)
     const overId = String(over.id)
 
+    if (activeId.startsWith('conv:') && overId.startsWith('nest:')) {
+      setDragOverConvId(overId.slice(5))
+      setDragOverZone(0.5)
+      setDragOverMode('nest')
+      return
+    }
+
     if (activeId.startsWith('conv:') && overId.startsWith('conv:')) {
       const overRect: ClientRect | null = over.rect
       const activeRect: ClientRect | null = active.rect.current.translated ?? active.rect.current.initial
@@ -420,10 +433,12 @@ export function ChatSidebar() {
         : 0.5
       setDragOverConvId(overId.slice(5))
       setDragOverZone(zone)
+      setDragOverMode('sort')
       return
     }
 
     setDragOverConvId(null)
+    setDragOverMode(null)
 
     if (!activeId.startsWith('cat:') || !overId.startsWith('cat:')) return
     if (activeId === overId) return
@@ -454,6 +469,7 @@ export function ChatSidebar() {
       setActiveDragConvId(null)
       setDragOverConvId(null)
       setDragOverZone(0.5)
+      setDragOverMode(null)
 
       if (!over) return
       const activeId = String(active.id)
@@ -489,6 +505,19 @@ export function ChatSidebar() {
         return
       }
 
+      if (overId.startsWith('nest:')) {
+        const targetConvId = overId.slice(5)
+        if (convId === targetConvId) return
+        const targetConv = conversationById.get(targetConvId)
+        if (!targetConv) return
+        if (isAncestorConversation(convId, targetConvId)) return
+        void updateConversation(convId, {
+          parent_conversation_id: targetConvId,
+          category_id: targetConv.category_id,
+        })
+        return
+      }
+
       if (overId.startsWith('conv:')) {
         const targetConvId = overId.slice(5)
         if (convId === targetConvId) return
@@ -502,49 +531,41 @@ export function ChatSidebar() {
           ? (pointerY - overRect.top) / overRect.height
           : 0.5
 
-        if (zone < 0.25 || zone > 0.75) {
-          const sameParent = conv.parent_conversation_id === targetConv.parent_conversation_id
-            && conv.category_id === targetConv.category_id
-          if (!sameParent) {
-            if (isAncestorConversation(convId, targetConvId)) return
-            const newSortOrder = zone < 0.25
-              ? targetConv.sort_order - 1
-              : targetConv.sort_order + 1
-            void updateConversation(convId, {
-              parent_conversation_id: targetConv.parent_conversation_id,
-              category_id: targetConv.category_id,
-              sort_order: newSortOrder,
-            })
-            return
-          }
-
-          const siblings = conversations
-            .filter((c) =>
-              (c.parent_conversation_id ?? null) === (conv.parent_conversation_id ?? null)
-              && (c.category_id ?? null) === (conv.category_id ?? null)
-            )
-            .sort((a, b) => a.sort_order - b.sort_order || b.updated_at - a.updated_at)
-            .map((c) => c.id)
-          const fromIndex = siblings.indexOf(convId)
-          const toIndex = siblings.indexOf(targetConvId)
-          if (fromIndex === -1 || toIndex === -1) return
-
-          const newOrder = [...siblings]
-          newOrder.splice(fromIndex, 1)
-          if (zone > 0.75) {
-            newOrder.splice(toIndex + 1, 0, convId)
-          } else {
-            newOrder.splice(toIndex, 0, convId)
-          }
-          void reorderConversations(newOrder)
+        // 拖到会话 label 上总是排序，上/下各 50%
+        const sameParent = conv.parent_conversation_id === targetConv.parent_conversation_id
+          && conv.category_id === targetConv.category_id
+        if (!sameParent) {
+          if (isAncestorConversation(convId, targetConvId)) return
+          const newSortOrder = zone < 0.5
+            ? targetConv.sort_order - 1
+            : targetConv.sort_order + 1
+          void updateConversation(convId, {
+            parent_conversation_id: targetConv.parent_conversation_id,
+            category_id: targetConv.category_id,
+            sort_order: newSortOrder,
+          })
           return
         }
 
-        if (isAncestorConversation(convId, targetConvId)) return
-        void updateConversation(convId, {
-          parent_conversation_id: targetConvId,
-          category_id: targetConv.category_id,
-        })
+        const siblings = conversations
+          .filter((c) =>
+            (c.parent_conversation_id ?? null) === (conv.parent_conversation_id ?? null)
+            && (c.category_id ?? null) === (conv.category_id ?? null)
+          )
+          .sort((a, b) => a.sort_order - b.sort_order || b.updated_at - a.updated_at)
+          .map((c) => c.id)
+        const fromIndex = siblings.indexOf(convId)
+        const toIndex = siblings.indexOf(targetConvId)
+        if (fromIndex === -1 || toIndex === -1) return
+
+        const newOrder = [...siblings]
+        newOrder.splice(fromIndex, 1)
+        if (zone >= 0.5) {
+          newOrder.splice(toIndex + 1, 0, convId)
+        } else {
+          newOrder.splice(toIndex, 0, convId)
+        }
+        void reorderConversations(newOrder)
       }
     },
     [conversationById, conversations, isAncestorConversation, updateConversation, reorderConversations],
@@ -555,6 +576,7 @@ export function ChatSidebar() {
     setActiveDragConvId(null)
     setDragOverConvId(null)
     setDragOverZone(0.5)
+    setDragOverMode(null)
     const initial = dragInitialOrderRef.current
     if (initial.length > 0) {
       useCategoryStore.setState((s) => ({
@@ -596,14 +618,14 @@ export function ChatSidebar() {
     setRightClickedConvId(null)
   })
 
-  // Auto-expand parent when active conversation is a child
+  // Auto-expand parent when active conversation is a child (navigation only, not on every toggle)
   useEffect(() => {
     if (!activeConversationId) return
     const active = conversationById.get(activeConversationId)
-    if (active?.parent_conversation_id && !expandedParentIds.has(active.parent_conversation_id)) {
-      setExpandedParentIds((prev) => new Set(prev).add(active.parent_conversation_id!))
+    if (active?.parent_conversation_id) {
+      setExpandedParentIds((prev) => prev.has(active.parent_conversation_id!) ? prev : new Set(prev).add(active.parent_conversation_id!))
     }
-  }, [activeConversationId, conversationById, expandedParentIds])
+  }, [activeConversationId, conversationById])
 
   // Hydrate expandedParentIds from settings once
   useEffect(() => {
@@ -704,7 +726,7 @@ export function ChatSidebar() {
     return categoryById.get(activeConversation.category_id) ?? null
   }, [activeConversation?.category_id, categoryById])
 
-  const handleNewConversation = useCallback(async (categoryId?: string | null) => {
+  const handleNewConversation = useCallback(async (options?: { categoryId?: string | null, parentConversationId?: string }) => {
     let provider: typeof providers[0] | undefined
     let model: typeof providers[0]['models'][0] | undefined
 
@@ -730,13 +752,16 @@ export function ChatSidebar() {
       return
     }
 
-    const templateCategoryId = categoryId ?? null
-    await createConversation(
+    const templateCategoryId = options?.categoryId ?? null
+    const conversation = await createConversation(
       t('chat.newConversation'),
       model.model_id,
       provider.id,
-      { categoryId: templateCategoryId },
+      { categoryId: templateCategoryId, parentConversationId: options?.parentConversationId },
     )
+    if (options?.parentConversationId) {
+      setExpandedParentIds((prev) => new Set(prev).add(options.parentConversationId!))
+    }
   }, [providers, settings, activeConversation, createConversation, messageApi, t])
 
   const newConversationMenuItems = useMemo(() => {
@@ -758,17 +783,17 @@ export function ChatSidebar() {
   const handleNewConversationMenuClick = useCallback(
     ({ key }: { key: string }) => {
       if (key === 'current-category' && activeConversationCategory) {
-        void handleNewConversation(activeConversationCategory.id)
+        void handleNewConversation({ categoryId: activeConversationCategory.id })
         return
       }
-      void handleNewConversation(null)
+      void handleNewConversation()
     },
     [activeConversationCategory, handleNewConversation],
   )
 
   useEffect(() => {
     const onShortcutNewConversation = () => {
-      void handleNewConversation(null);
+      void handleNewConversation();
     };
     window.addEventListener('aqbot:new-conversation', onShortcutNewConversation);
     return () => {
@@ -1023,12 +1048,12 @@ export function ChatSidebar() {
           }}
           style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}
         >
-          <ChevronRight
-            size={12}
+          <RightOutlined
             style={{
-              color: token.colorTextQuaternary,
-              transition: 'transform 0.2s',
+              color: token.colorTextDescription,
+              transition: `all ${token.motionDurationMid} ${token.motionEaseInOut}`,
               transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+              fontSize: token.fontSizeIcon,
             }}
           />
         </span>
@@ -1059,7 +1084,7 @@ export function ChatSidebar() {
             />
             {icon}
           </span>
-        ) : icon,
+        ) : <IconNestDroppable conversationId={conv.id}>{icon}</IconNestDroppable>,
         group: row.group,
         'data-conv-id': conv.id,
         'data-row-key': row.key,
@@ -1168,7 +1193,7 @@ export function ChatSidebar() {
           <SortableCategoryLabel
             cat={cat}
             menuActionRef={menuActionRef}
-            onCreateConversation={() => { void handleNewConversation(cat.id) }}
+            onCreateConversation={() => { void handleNewConversation({ categoryId: cat.id }) }}
             newConversationLabel={t('chat.newConversation')}
             editLabel={t('chat.editCategory')}
             deleteLabel={t('chat.deleteCategory')}
@@ -1362,93 +1387,6 @@ export function ChatSidebar() {
     [activeConversationId, hasNewerMessages, hasOlderMessages, messageApi, messagesLoading, t],
   )
 
-  const menuConfig = useCallback<ConversationMenuFactory>(
-    (item, options) => {
-      if (multiSelectMode) return { items: [] }
-      const includeItems = options?.includeItems ?? true
-      const conv = conversationById.get(String(item.key))
-      const isPinned = conv?.is_pinned ?? false
-      const isGeneratingTitle = titleGeneratingConversationId === String(item.key)
-      const categoryItems: any[] = []
-      if (includeItems && categories.length > 0) {
-        const moveChildren = moveToCategoryMenuItems.filter(
-          (mi) => mi.key !== `move-to-cat:${conv?.category_id}`,
-        )
-        if (conv?.category_id) {
-          moveChildren.unshift({
-            key: 'remove-from-category',
-            label: (<span className="flex items-center gap-1.5"><X size={13} /><span>{t('chat.removeFromCategory')}</span></span>),
-          })
-        }
-        if (moveChildren.length > 0) {
-          categoryItems.push({
-            key: 'move-to-category',
-            label: (<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><FolderOpen size={14} />{t('chat.moveToCategory')}</span>),
-            children: moveChildren,
-          })
-        }
-      }
-      return {
-        trigger: (_conversation: ConversationItemType, info: { originNode: React.ReactNode }) => {
-          return <Tooltip title={t('chat.delete')}>{info.originNode}</Tooltip>
-        },
-        items: !includeItems ? [] : [
-          {
-            key: 'pin',
-            label: isPinned ? t('chat.unpin') : t('chat.pin'),
-            icon: isPinned ? <PinOff size={14} /> : <Pin size={14} />,
-          },
-          { key: 'archive', label: t('chat.archive'), icon: <Archive size={14} /> },
-          ...categoryItems,
-          { key: 'rename', label: t('chat.rename'), icon: <Pencil size={14} /> },
-          {
-            key: 'generate-title',
-            label: t('chat.generateTitle'),
-            icon: isGeneratingTitle
-              ? <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
-              : <Sparkles size={14} />,
-            disabled: isGeneratingTitle,
-          },
-          {
-            key: 'export',
-            label: (<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Share size={14} />{t('chat.export')}</span>),
-            children: buildExportChildren(String(item.key), conv?.title ?? (typeof item.label === 'string' ? item.label : '')),
-          },
-          { key: 'delete', label: t('chat.delete'), icon: <Trash2 size={14} />, danger: true },
-        ],
-        onClick: (menuInfo: { key: string }) => {
-          if (menuInfo.key.startsWith('move-to-cat:')) {
-            const catId = menuInfo.key.slice('move-to-cat:'.length)
-            void updateConversation(String(item.key), { category_id: catId })
-            return
-          }
-          if (menuInfo.key === 'remove-from-category') {
-            void updateConversation(String(item.key), { category_id: null })
-            return
-          }
-          switch (menuInfo.key) {
-            case 'pin':
-              togglePin(String(item.key))
-              break
-            case 'archive':
-              toggleArchive(String(item.key))
-              break
-            case 'rename':
-              handleRename(item)
-              break
-            case 'generate-title':
-              handleGenerateTitle(String(item.key))
-              break
-            case 'delete':
-              handleDelete(item)
-              break
-          }
-        },
-      }
-    },
-    [t, conversationById, multiSelectMode, handleRename, handleGenerateTitle, handleDelete, togglePin, toggleArchive, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation, titleGeneratingConversationId],
-  )
-
   const handleConversationClick = useCallback((key: string) => {
     if (multiSelectMode) {
       toggleSelect(key)
@@ -1484,6 +1422,8 @@ export function ChatSidebar() {
     }
     return {
       items: [
+        { key: 'new-child-conversation', label: t('chat.newChildConversation'), icon: <MessageSquarePlus size={14} /> },
+        { type: 'divider' },
         { key: 'pin', label: isPinned ? t('chat.unpin') : t('chat.pin'), icon: isPinned ? <PinOff size={14} /> : <Pin size={14} /> },
         { key: 'archive', label: t('chat.archive'), icon: <Archive size={14} /> },
         ...categoryItems,
@@ -1515,6 +1455,7 @@ export function ChatSidebar() {
         }
         const item = { key: conv.id, label: conv.title } as ConversationItemType
         switch (menuInfo.key) {
+          case 'new-child-conversation': void handleNewConversation({ parentConversationId: conv.id, categoryId: conv.category_id }); break
           case 'pin': togglePin(conv.id); break
           case 'archive': toggleArchive(conv.id); break
           case 'rename': handleRename(item); break
@@ -1523,7 +1464,7 @@ export function ChatSidebar() {
         }
       },
     }
-  }, [rightClickedConvId, conversationById, t, togglePin, toggleArchive, handleRename, handleGenerateTitle, handleDelete, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation, titleGeneratingConversationId])
+  }, [rightClickedConvId, conversationById, t, togglePin, toggleArchive, handleRename, handleGenerateTitle, handleDelete, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation, titleGeneratingConversationId, handleNewConversation])
 
   return (
     <div className="flex flex-col h-full">
@@ -1625,7 +1566,7 @@ export function ChatSidebar() {
                     icon={<MessageSquarePlus size={16} />}
                     size="small"
                     aria-label={t('chat.newConversation')}
-                    onClick={() => { void handleNewConversation(null) }}
+                    onClick={() => { void handleNewConversation() }}
                   />
                 )}
               </Tooltip>
@@ -1828,13 +1769,13 @@ export function ChatSidebar() {
               {conversationRows.length > 0 ? (
                 <DndContext
                   sensors={dndSensors}
-                  collisionDetection={closestCenter}
+                  collisionDetection={collisionDetectionWithNest}
                   onDragStart={handleDragStart}
                   onDragOver={handleDragOver}
                   onDragEnd={handleDragEnd}
                   onDragCancel={handleDragCancel}
                 >
-                  <DragZoneContext.Provider value={{ overConvId: dragOverConvId, zone: dragOverZone }}>
+                  <DragZoneContext.Provider value={{ overConvId: dragOverConvId, zone: dragOverZone, mode: dragOverMode }}>
                   <ConversationList
                     rows={conversationRows}
                     activeKey={multiSelectMode ? undefined : (activeConversationId ?? undefined)}
@@ -1844,7 +1785,8 @@ export function ChatSidebar() {
                     onGroupToggle={handleGroupToggle}
                     nativeGroupable={groupableConfig}
                     scrollElementRef={listScrollRef}
-                    menu={menuConfig}
+                    sortTargetId={dragOverMode === 'sort' ? dragOverConvId : null}
+                    sortTargetZone={dragOverZone}
                   />
                   <DragOverlay>
                     {activeDragCatId ? (() => {
