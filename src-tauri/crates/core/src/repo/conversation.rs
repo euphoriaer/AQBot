@@ -36,6 +36,7 @@ fn conversation_from_entity(m: conversations::Model) -> Conversation {
         category_id: m.category_id,
         parent_conversation_id: m.parent_conversation_id,
         mode: m.mode,
+        sort_order: m.sort_order,
         created_at: m.created_at,
         updated_at: m.updated_at,
     }
@@ -54,6 +55,7 @@ pub async fn list_conversations(db: &DatabaseConnection) -> Result<Vec<Conversat
     let rows = conversations::Entity::find()
         .filter(conversations::Column::IsArchived.eq(0))
         .order_by_desc(conversations::Column::IsPinned)
+        .order_by_asc(conversations::Column::SortOrder)
         .order_by_desc(conversations::Column::UpdatedAt)
         .all(db)
         .await?;
@@ -185,6 +187,9 @@ pub async fn update_conversation(
     if let Some(mode) = input.mode {
         am.mode = Set(mode);
     }
+    if let Some(sort_order) = input.sort_order {
+        am.sort_order = Set(sort_order);
+    }
     am.updated_at = Set(now);
     am.update(db).await?;
 
@@ -245,6 +250,28 @@ pub async fn delete_conversation(db: &DatabaseConnection, id: &str) -> Result<()
     if result.rows_affected == 0 {
         return Err(AQBotError::NotFound(format!("Conversation {}", id)));
     }
+    Ok(())
+}
+
+/// Reassign `sort_order` for the given conversation IDs in the order provided.
+/// Only meaningful when called with a sibling subset (same parent + category),
+/// but the function does not enforce that constraint — the caller is expected
+/// to pass a sibling group.
+pub async fn reorder_conversations(
+    db: &DatabaseConnection,
+    conversation_ids: &[String],
+) -> Result<()> {
+    let txn = db.begin().await?;
+    let now = now_ts();
+    for (i, id) in conversation_ids.iter().enumerate() {
+        conversations::Entity::update_many()
+            .col_expr(conversations::Column::SortOrder, Expr::value(i as i32))
+            .col_expr(conversations::Column::UpdatedAt, Expr::value(now))
+            .filter(conversations::Column::Id.eq(id))
+            .exec(&txn)
+            .await?;
+    }
+    txn.commit().await?;
     Ok(())
 }
 

@@ -62,6 +62,7 @@ function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
     parent_conversation_id: null,
     mode: 'chat',
     message_count: 0,
+    sort_order: 0,
     created_at: 0,
     updated_at: 0,
     ...overrides,

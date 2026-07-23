@@ -701,6 +701,7 @@ function categoryTemplateUpdateFromCategory(
   | 'max_tokens'
   | 'top_p'
   | 'frequency_penalty'
+  | 'mode'
 > {
   if (!category) {
     return {};
@@ -713,6 +714,7 @@ function categoryTemplateUpdateFromCategory(
     max_tokens: category.default_max_tokens,
     top_p: category.default_top_p,
     frequency_penalty: category.default_frequency_penalty,
+    mode: category.default_mode ?? undefined,
   };
 }
 
@@ -1347,6 +1349,7 @@ interface ConversationState {
     options?: { categoryId?: string | null },
   ) => Promise<Conversation>;
   updateConversation: (id: string, input: UpdateConversationInput) => Promise<void>;
+  reorderConversations: (conversationIds: string[]) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   branchConversation: (conversationId: string, untilMessageId: string, asChild: boolean, title?: string) => Promise<Conversation>;
@@ -2332,6 +2335,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
+  reorderConversations: async (conversationIds) => {
+    try {
+      await invoke('reorder_conversations', { conversationIds });
+      set((s) => {
+        const orderMap = new Map<string, number>();
+        conversationIds.forEach((id, i) => orderMap.set(id, i));
+        const patched = s.conversations.map((c) =>
+          orderMap.has(c.id) ? { ...c, sort_order: orderMap.get(c.id)! } : c,
+        );
+        return {
+          conversations: patched,
+          conversationsMeta: mutateConversationsMeta(s.conversationsMeta),
+        };
+      });
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
   renameConversation: async (id, title) => {
     await get().updateConversation(id, { title });
   },
@@ -2349,11 +2372,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       await invoke('delete_conversation', { id });
       invalidateConversationMessageCache(id);
       const state = get();
+      const idsToRemove = new Set<string>([id]);
+      let queue: string[] = [id];
+      while (queue.length > 0) {
+        const parents = queue;
+        queue = [];
+        for (const conversation of state.conversations) {
+          const parentId = conversation.parent_conversation_id;
+          if (parentId && parents.includes(parentId) && !idsToRemove.has(conversation.id)) {
+            idsToRemove.add(conversation.id);
+            queue.push(conversation.id);
+          }
+        }
+      }
+      const activeBecomesOrphaned = idsToRemove.has(state.activeConversationId ?? '');
       set({
-        conversations: state.conversations.filter((c) => c.id !== id),
+        conversations: state.conversations.filter((c) => !idsToRemove.has(c.id)),
         conversationsMeta: mutateConversationsMeta(state.conversationsMeta),
-        activeConversationId: state.activeConversationId === id ? null : state.activeConversationId,
-        messages: state.activeConversationId === id ? [] : state.messages,
+        activeConversationId: activeBecomesOrphaned ? null : state.activeConversationId,
+        messages: activeBecomesOrphaned ? [] : state.messages,
         error: null,
       });
     } catch (e) {

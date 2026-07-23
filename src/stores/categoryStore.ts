@@ -39,6 +39,7 @@ interface CategoryState {
     default_max_tokens?: number | null;
     default_top_p?: number | null;
     default_frequency_penalty?: number | null;
+    default_mode?: 'agent' | 'chat' | null;
   }) => Promise<ConversationCategory>;
   updateCategory: (
     id: string,
@@ -53,6 +54,7 @@ interface CategoryState {
       default_max_tokens?: number | null;
       default_top_p?: number | null;
       default_frequency_penalty?: number | null;
+      default_mode?: 'agent' | 'chat' | null;
     },
   ) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;

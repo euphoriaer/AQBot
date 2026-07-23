@@ -21,6 +21,7 @@ fn category_from_entity(m: conversation_categories::Model) -> ConversationCatego
         default_max_tokens: m.default_max_tokens,
         default_top_p: m.default_top_p,
         default_frequency_penalty: m.default_frequency_penalty,
+        default_mode: m.default_mode,
         sort_order: m.sort_order,
         is_collapsed: m.is_collapsed != 0,
         created_at: m.created_at,
@@ -66,6 +67,7 @@ pub async fn create_conversation_category(
         default_max_tokens: Set(input.default_max_tokens),
         default_top_p: Set(input.default_top_p),
         default_frequency_penalty: Set(input.default_frequency_penalty),
+        default_mode: Set(input.default_mode),
         sort_order: Set(sort_order),
         is_collapsed: Set(1),
         created_at: Set(now),
@@ -115,6 +117,9 @@ pub async fn update_conversation_category(
     }
     if let Some(default_frequency_penalty) = input.default_frequency_penalty {
         am.default_frequency_penalty = Set(default_frequency_penalty);
+    }
+    if let Some(default_mode) = input.default_mode {
+        am.default_mode = Set(default_mode);
     }
     am.updated_at = Set(now_ts());
     am.update(db).await?;

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef, memo } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef, memo, createContext, useContext } from 'react'
 import { Button, Input, App, theme, Tooltip, Avatar, Checkbox, Dropdown, Empty } from 'antd'
 import { MessageSquarePlus, Search, Archive, ListTodo, Trash2, Pencil, Share, Pin, PinOff, Loader, X, Undo2, ArrowLeft, FileImage, FileCode, FileType, FileText, FolderPlus, FolderOpen, GripVertical, ChevronRight, MessageSquareText, Sparkles } from 'lucide-react'
 import { getConvIcon } from '@/lib/convIcon'
@@ -35,22 +35,8 @@ import {
   type DragEndEvent,
   type DragStartEvent,
   type DragOverEvent,
+  type ClientRect,
 } from '@dnd-kit/core'
-
-type DeleteShortcutEvent = Pick<React.MouseEvent<HTMLElement>, 'ctrlKey' | 'metaKey'>
-
-function isDirectDeleteEvent(event?: DeleteShortcutEvent): boolean {
-  return Boolean(event?.ctrlKey || event?.metaKey)
-}
-
-function getDirectDeleteShortcutLabel(): string {
-  if (typeof navigator === 'undefined') return 'Ctrl'
-  const platform = navigator.platform || ''
-  const userAgent = navigator.userAgent || ''
-  const isMac = /Mac|iPhone|iPad|iPod/i.test(platform)
-    || (/Mac OS/i.test(userAgent) && !/Windows|Linux|Android/i.test(userAgent))
-  return isMac ? '⌘' : 'Ctrl'
-}
 
 function ConversationTitleText({ title, className = '' }: { title: string; className?: string }) {
   const mergedClassName = ['aqbot-chat-conversation-title', className].filter(Boolean).join(' ')
@@ -191,8 +177,9 @@ function SortableCategoryLabel({
   editLabel: string
   deleteLabel: string
 }) {
-  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id: cat.id })
-  const { setNodeRef: setDropRef } = useDroppable({ id: cat.id })
+  const dragId = `cat:${cat.id}`
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id: dragId })
+  const { setNodeRef: setDropRef } = useDroppable({ id: dragId })
   const mergedRef = useCallback((node: HTMLDivElement | null) => {
     setDragRef(node)
     setDropRef(node)
@@ -237,6 +224,105 @@ function SortableCategoryLabel({
   )
 }
 
+const DragZoneContext = createContext<{ overConvId: string | null; zone: number }>({
+  overConvId: null,
+  zone: 0.5,
+})
+
+function SortableConversationLabel({
+  conversation,
+  children,
+}: {
+  conversation: Conversation
+  children: React.ReactNode
+}) {
+  const dragId = `conv:${conversation.id}`
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id: dragId })
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: dragId })
+  const { overConvId, zone } = useContext(DragZoneContext)
+  const mergedRef = useCallback((node: HTMLSpanElement | null) => {
+    setDragRef(node)
+    setDropRef(node)
+  }, [setDragRef, setDropRef])
+
+  const isZoneTarget = isOver && overConvId === conversation.id
+  const showBefore = isZoneTarget && zone < 0.25
+  const showAfter = isZoneTarget && zone > 0.75
+  const showNest = isZoneTarget && zone >= 0.25 && zone <= 0.75
+
+  return (
+    <span
+      ref={mergedRef}
+      className="aqbot-chat-conversation-label"
+      style={{
+        opacity: isDragging ? 0.3 : 1,
+        position: 'relative',
+        outline: showNest ? `1px dashed var(--color-primary, #1677ff)` : 'none',
+        outlineOffset: '-1px',
+        borderRadius: 4,
+        background: showNest ? 'var(--color-primary-bg, rgba(22, 119, 255, 0.08))' : 'transparent',
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      {showBefore && (
+        <span
+          style={{
+            position: 'absolute',
+            top: -1,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: 'var(--color-primary, #1677ff)',
+            borderRadius: 1,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      {showAfter && (
+        <span
+          style={{
+            position: 'absolute',
+            bottom: -1,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: 'var(--color-primary, #1677ff)',
+            borderRadius: 1,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      {children}
+    </span>
+  )
+}
+
+function DroppableGroupLabel({
+  id,
+  label,
+}: {
+  id: string
+  label: string
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id })
+  return (
+    <span
+      ref={setNodeRef}
+      style={{
+        display: 'inline-block',
+        opacity: isOver ? 0.6 : 1,
+        outline: isOver ? `1px dashed var(--color-primary, #1677ff)` : 'none',
+        outlineOffset: '2px',
+        borderRadius: 4,
+        padding: '0 2px',
+      }}
+    >
+      {label}
+    </span>
+  )
+}
+
 export function ChatSidebar() {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -260,6 +346,7 @@ export function ChatSidebar() {
   const streamingConversationId = useConversationStore((s) => s.streamingConversationId)
   const titleGeneratingConversationId = useConversationStore((s) => s.titleGeneratingConversationId)
   const regenerateTitle = useConversationStore((s) => s.regenerateTitle)
+  const reorderConversations = useConversationStore((s) => s.reorderConversations)
 
   const providers = useProviderStore((s) => s.providers)
   const settings = useSettingsStore((s) => s.settings)
@@ -284,23 +371,72 @@ export function ChatSidebar() {
   )
 
   const [activeDragCatId, setActiveDragCatId] = useState<string | null>(null)
+  const [activeDragConvId, setActiveDragConvId] = useState<string | null>(null)
+  const [dragOverConvId, setDragOverConvId] = useState<string | null>(null)
+  const [dragOverZone, setDragOverZone] = useState<number>(0.5)
   const dragInitialOrderRef = useRef<string[]>([])
 
-  const handleCategoryDragStart = useCallback((event: DragStartEvent) => {
-    setActiveDragCatId(String(event.active.id))
-    dragInitialOrderRef.current = categories.map((c) => c.id)
+  const isAncestorConversation = useCallback(
+    (ancestorId: string, descendantId: string): boolean => {
+      const byId = conversationById
+      let current = byId.get(descendantId)
+      const visited = new Set<string>()
+      while (current?.parent_conversation_id) {
+        if (visited.has(current.id)) break
+        visited.add(current.id)
+        if (current.parent_conversation_id === ancestorId) return true
+        current = byId.get(current.parent_conversation_id)
+      }
+      return false
+    },
+    [conversationById],
+  )
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const id = String(event.active.id)
+    if (id.startsWith('cat:')) {
+      setActiveDragCatId(id.slice(4))
+      dragInitialOrderRef.current = categories.map((c) => c.id)
+    } else if (id.startsWith('conv:')) {
+      setActiveDragConvId(id.slice(5))
+    }
   }, [categories])
 
-  const handleCategoryDragOver = useCallback((event: DragOverEvent) => {
+  const handleDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event
-    if (!over || active.id === over.id) return
+    if (!over) {
+      setDragOverConvId(null)
+      return
+    }
+    const activeId = String(active.id)
+    const overId = String(over.id)
+
+    if (activeId.startsWith('conv:') && overId.startsWith('conv:')) {
+      const overRect: ClientRect | null = over.rect
+      const activeRect: ClientRect | null = active.rect.current.translated ?? active.rect.current.initial
+      const pointerY = activeRect ? activeRect.top + activeRect.height / 2 : null
+      const zone = overRect && pointerY !== null
+        ? (pointerY - overRect.top) / overRect.height
+        : 0.5
+      setDragOverConvId(overId.slice(5))
+      setDragOverZone(zone)
+      return
+    }
+
+    setDragOverConvId(null)
+
+    if (!activeId.startsWith('cat:') || !overId.startsWith('cat:')) return
+    if (activeId === overId) return
+
     const ids = categories.map((c) => c.id)
-    const oldIndex = ids.indexOf(String(active.id))
-    const newIndex = ids.indexOf(String(over.id))
+    const activeCatId = activeId.slice(4)
+    const overCatId = overId.slice(4)
+    const oldIndex = ids.indexOf(activeCatId)
+    const newIndex = ids.indexOf(overCatId)
     if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return
     const newIds = [...ids]
     newIds.splice(oldIndex, 1)
-    newIds.splice(newIndex, 0, String(active.id))
+    newIds.splice(newIndex, 0, activeCatId)
     useCategoryStore.setState((s) => ({
       categories: newIds
         .map((id, i) => {
@@ -311,18 +447,114 @@ export function ChatSidebar() {
     }))
   }, [categories])
 
-  const handleCategoryDragEnd = useCallback(
-    (_event: DragEndEvent) => {
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
       setActiveDragCatId(null)
-      // Always persist current order (onDragOver already updated store)
-      const ids = useCategoryStore.getState().categories.map((c) => c.id)
-      void invoke('reorder_conversation_categories', { categoryIds: ids })
+      setActiveDragConvId(null)
+      setDragOverConvId(null)
+      setDragOverZone(0.5)
+
+      if (!over) return
+      const activeId = String(active.id)
+      const overId = String(over.id)
+
+      if (activeId.startsWith('cat:') && overId.startsWith('cat:')) {
+        const ids = useCategoryStore.getState().categories.map((c) => c.id)
+        void invoke('reorder_conversation_categories', { categoryIds: ids })
+        return
+      }
+
+      if (!activeId.startsWith('conv:')) return
+      const convId = activeId.slice(5)
+      const conv = conversationById.get(convId)
+      if (!conv) return
+
+      if (overId.startsWith('cat:')) {
+        const catId = overId.slice(4)
+        if (conv.category_id === catId && !conv.parent_conversation_id) return
+        void updateConversation(convId, {
+          category_id: catId,
+          parent_conversation_id: null,
+        })
+        return
+      }
+
+      if (overId === 'group:uncategorized') {
+        if (!conv.category_id && !conv.parent_conversation_id) return
+        void updateConversation(convId, {
+          category_id: null,
+          parent_conversation_id: null,
+        })
+        return
+      }
+
+      if (overId.startsWith('conv:')) {
+        const targetConvId = overId.slice(5)
+        if (convId === targetConvId) return
+        const targetConv = conversationById.get(targetConvId)
+        if (!targetConv) return
+
+        const overRect: ClientRect | null = over.rect
+        const activeRect: ClientRect | null = active.rect.current.translated ?? active.rect.current.initial
+        const pointerY = activeRect ? activeRect.top + activeRect.height / 2 : null
+        const zone = overRect && pointerY !== null
+          ? (pointerY - overRect.top) / overRect.height
+          : 0.5
+
+        if (zone < 0.25 || zone > 0.75) {
+          const sameParent = conv.parent_conversation_id === targetConv.parent_conversation_id
+            && conv.category_id === targetConv.category_id
+          if (!sameParent) {
+            if (isAncestorConversation(convId, targetConvId)) return
+            const newSortOrder = zone < 0.25
+              ? targetConv.sort_order - 1
+              : targetConv.sort_order + 1
+            void updateConversation(convId, {
+              parent_conversation_id: targetConv.parent_conversation_id,
+              category_id: targetConv.category_id,
+              sort_order: newSortOrder,
+            })
+            return
+          }
+
+          const siblings = conversations
+            .filter((c) =>
+              (c.parent_conversation_id ?? null) === (conv.parent_conversation_id ?? null)
+              && (c.category_id ?? null) === (conv.category_id ?? null)
+            )
+            .sort((a, b) => a.sort_order - b.sort_order || b.updated_at - a.updated_at)
+            .map((c) => c.id)
+          const fromIndex = siblings.indexOf(convId)
+          const toIndex = siblings.indexOf(targetConvId)
+          if (fromIndex === -1 || toIndex === -1) return
+
+          const newOrder = [...siblings]
+          newOrder.splice(fromIndex, 1)
+          if (zone > 0.75) {
+            newOrder.splice(toIndex + 1, 0, convId)
+          } else {
+            newOrder.splice(toIndex, 0, convId)
+          }
+          void reorderConversations(newOrder)
+          return
+        }
+
+        if (isAncestorConversation(convId, targetConvId)) return
+        void updateConversation(convId, {
+          parent_conversation_id: targetConvId,
+          category_id: targetConv.category_id,
+        })
+      }
     },
-    [],
+    [conversationById, conversations, isAncestorConversation, updateConversation, reorderConversations],
   )
 
-  const handleCategoryDragCancel = useCallback(() => {
+  const handleDragCancel = useCallback(() => {
     setActiveDragCatId(null)
+    setActiveDragConvId(null)
+    setDragOverConvId(null)
+    setDragOverZone(0.5)
     const initial = dragInitialOrderRef.current
     if (initial.length > 0) {
       useCategoryStore.setState((s) => ({
@@ -354,31 +586,15 @@ export function ChatSidebar() {
   const [editingCategory, setEditingCategory] = useState<ConversationCategory | null>(null)
   const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(new Set())
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
-  const [directDeleteMode, setDirectDeleteMode] = useState(false)
   const listScrollRef = useRef<HTMLDivElement>(null)
+  const expandedParentsHydratedRef = useRef(false)
+  const expandedParentsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   usePageSuspendCleanup(() => {
     setCategoryModalOpen(false)
     setEditingCategory(null)
     setRightClickedConvId(null)
-    setDirectDeleteMode(false)
   })
-
-  useEffect(() => {
-    const updateFromKeyboard = (event: KeyboardEvent) => {
-      setDirectDeleteMode(event.ctrlKey || event.metaKey)
-    }
-    const reset = () => setDirectDeleteMode(false)
-
-    window.addEventListener('keydown', updateFromKeyboard)
-    window.addEventListener('keyup', updateFromKeyboard)
-    window.addEventListener('blur', reset)
-    return () => {
-      window.removeEventListener('keydown', updateFromKeyboard)
-      window.removeEventListener('keyup', updateFromKeyboard)
-      window.removeEventListener('blur', reset)
-    }
-  }, [])
 
   // Auto-expand parent when active conversation is a child
   useEffect(() => {
@@ -388,6 +604,44 @@ export function ChatSidebar() {
       setExpandedParentIds((prev) => new Set(prev).add(active.parent_conversation_id!))
     }
   }, [activeConversationId, conversationById, expandedParentIds])
+
+  // Hydrate expandedParentIds from settings once
+  useEffect(() => {
+    if (expandedParentsHydratedRef.current) return
+    if (settingsLoading) return
+    if (conversations.length === 0) return
+    const stored = settings.chat_sidebar_expanded_parent_ids
+    if (stored && stored.length > 0) {
+      const validIds = new Set(conversations.map((c) => c.id))
+      const filtered = stored.filter((id) => validIds.has(id))
+      if (filtered.length > 0) {
+        setExpandedParentIds((prev) => {
+          const next = new Set(prev)
+          filtered.forEach((id) => next.add(id))
+          return next
+        })
+      }
+    }
+    expandedParentsHydratedRef.current = true
+  }, [settings.chat_sidebar_expanded_parent_ids, settingsLoading, conversations])
+
+  // Persist expandedParentIds to settings (debounced)
+  useEffect(() => {
+    if (!expandedParentsHydratedRef.current) return
+    if (expandedParentsSaveTimerRef.current) {
+      clearTimeout(expandedParentsSaveTimerRef.current)
+    }
+    expandedParentsSaveTimerRef.current = setTimeout(() => {
+      void useSettingsStore.getState().saveSettings({
+        chat_sidebar_expanded_parent_ids: [...expandedParentIds],
+      })
+    }, 500)
+    return () => {
+      if (expandedParentsSaveTimerRef.current) {
+        clearTimeout(expandedParentsSaveTimerRef.current)
+      }
+    }
+  }, [expandedParentIds])
 
   // Auto-select conversation: restore last selected, or fall back to first
   useEffect(() => {
@@ -663,24 +917,16 @@ export function ChatSidebar() {
     return <ConversationIcon conv={conv} isStreaming={streamingConversationId === conv.id} />
   }, [streamingConversationId])
 
-  const directDeleteShortcutLabel = useMemo(() => getDirectDeleteShortcutLabel(), [])
-  const directDeleteHint = t('chat.directDeleteHint', { shortcut: directDeleteShortcutLabel })
-
   const handleDelete = useCallback(
     (
       item: Pick<ConversationItemType, 'key'>,
-      event?: DeleteShortcutEvent,
+      _event?: React.MouseEvent<HTMLElement>,
       afterDelete?: () => void | Promise<void>,
     ) => {
       const id = String(item.key)
       const runDelete = async () => {
         await deleteConversation(id)
         await afterDelete?.()
-      }
-
-      if (isDirectDeleteEvent(event)) {
-        void runDelete()
-        return
       }
 
       modal.confirm({
@@ -692,11 +938,6 @@ export function ChatSidebar() {
     },
     [deleteConversation, t, modal],
   )
-
-  const syncDirectDeleteModeFromMouse = useCallback((event: DeleteShortcutEvent) => {
-    const next = isDirectDeleteEvent(event)
-    setDirectDeleteMode((current) => (current === next ? current : next))
-  }, [])
 
   const expandedGroupKeySet = useMemo(() => new Set(expandedKeys), [expandedKeys])
   const rowExpandedParentIds = useMemo(() => {
@@ -742,10 +983,10 @@ export function ChatSidebar() {
         }
       }
 
-      const { conversation: conv, isChild, childCount, expanded } = row
+      const { conversation: conv, isChild, isPinnedShortcut, childCount, expanded } = row
       const icon = buildIcon(conv)
       const isGeneratingTitle = titleGeneratingConversationId === conv.id
-      const pinNode = conv.is_pinned && !isChild
+      const pinNode = conv.is_pinned && !isChild && !isPinnedShortcut
         ? <Pin size={12} style={{ color: token.colorTextQuaternary, flexShrink: 0 }} />
         : null
       const generatingTitleNode = isGeneratingTitle ? (
@@ -769,7 +1010,7 @@ export function ChatSidebar() {
           </span>
         </Tooltip>
       ) : null
-      const expandToggleNode = childCount > 0 ? (
+      const expandToggleNode = childCount > 0 && !isPinnedShortcut ? (
         <span
           onClick={(event) => {
             event.stopPropagation()
@@ -792,13 +1033,18 @@ export function ChatSidebar() {
           />
         </span>
       ) : null
-      const label = (
-        <span className="aqbot-chat-conversation-label">
-          {expandToggleNode}
+      const labelContent = (
+        <>
           <ConversationTitleText title={conv.title} className="flex-1" />
           {generatingTitleNode}
           {pinNode}
-        </span>
+          {expandToggleNode}
+        </>
+      )
+      const label = isPinnedShortcut ? (
+        <span className="aqbot-chat-conversation-label">{labelContent}</span>
+      ) : (
+        <SortableConversationLabel conversation={conv}>{labelContent}</SortableConversationLabel>
       )
 
       return {
@@ -816,7 +1062,7 @@ export function ChatSidebar() {
         ) : icon,
         group: row.group,
         'data-conv-id': conv.id,
-        ...(isChild ? { style: { paddingInlineStart: 20 } } : {}),
+        'data-row-key': row.key,
       }
     },
     [buildIcon, multiSelectMode, selectedIds, t, titleGeneratingConversationId, toggleSelect, token.colorPrimary, token.colorTextQuaternary],
@@ -826,11 +1072,7 @@ export function ChatSidebar() {
     () => {
       const labels: Record<string, string> = {
         pinned: t('chat.pinned'),
-        today: t('chat.today'),
-        yesterday: t('chat.yesterday'),
-        thisWeek: t('chat.thisWeek'),
-        thisMonth: t('chat.thisMonth'),
-        earlier: t('chat.earlier'),
+        uncategorized: t('chat.uncategorized'),
       }
       categories.forEach((cat) => {
         labels[`cat:${cat.id}`] = cat.name
@@ -938,6 +1180,9 @@ export function ChatSidebar() {
           />
         )
       }
+      if (group === 'uncategorized') {
+        return <DroppableGroupLabel id="group:uncategorized" label={groupLabels[group] ?? group} />
+      }
       return groupLabels[group] ?? group
     },
     [categoryById, groupLabels, t, handleDeleteCategory, handleNewConversation],
@@ -966,6 +1211,7 @@ export function ChatSidebar() {
         default_max_tokens: data.default_max_tokens,
         default_top_p: data.default_top_p,
         default_frequency_penalty: data.default_frequency_penalty,
+        default_mode: data.default_mode,
       })
     },
     [createCategory],
@@ -985,6 +1231,7 @@ export function ChatSidebar() {
         default_max_tokens: data.default_max_tokens,
         default_top_p: data.default_top_p,
         default_frequency_penalty: data.default_frequency_penalty,
+        default_mode: data.default_mode,
       })
       setEditingCategory(null)
     },
@@ -1143,28 +1390,9 @@ export function ChatSidebar() {
       }
       return {
         trigger: (_conversation: ConversationItemType, info: { originNode: React.ReactNode }) => {
-          if (!directDeleteMode) {
-            return <Tooltip title={directDeleteHint}>{info.originNode}</Tooltip>
-          }
-          return (
-            <Tooltip title={directDeleteHint}>
-              <Button
-                type="text"
-                danger
-                size="small"
-                aria-label={t('chat.delete')}
-                className="ant-conversations-menu-icon aqbot-chat-conversation-menu-delete"
-                icon={<Trash2 size={14} />}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  handleDelete(item, event)
-                }}
-              />
-            </Tooltip>
-          )
+          return <Tooltip title={t('chat.delete')}>{info.originNode}</Tooltip>
         },
-        items: directDeleteMode || !includeItems ? [] : [
+        items: !includeItems ? [] : [
           {
             key: 'pin',
             label: isPinned ? t('chat.unpin') : t('chat.pin'),
@@ -1188,7 +1416,7 @@ export function ChatSidebar() {
           },
           { key: 'delete', label: t('chat.delete'), icon: <Trash2 size={14} />, danger: true },
         ],
-        onClick: (menuInfo: { key: string; domEvent?: DeleteShortcutEvent }) => {
+        onClick: (menuInfo: { key: string }) => {
           if (menuInfo.key.startsWith('move-to-cat:')) {
             const catId = menuInfo.key.slice('move-to-cat:'.length)
             void updateConversation(String(item.key), { category_id: catId })
@@ -1212,13 +1440,13 @@ export function ChatSidebar() {
               handleGenerateTitle(String(item.key))
               break
             case 'delete':
-              handleDelete(item, menuInfo.domEvent)
+              handleDelete(item)
               break
           }
         },
       }
     },
-    [t, conversationById, multiSelectMode, handleRename, handleGenerateTitle, handleDelete, togglePin, toggleArchive, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation, directDeleteMode, directDeleteHint, titleGeneratingConversationId],
+    [t, conversationById, multiSelectMode, handleRename, handleGenerateTitle, handleDelete, togglePin, toggleArchive, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation, titleGeneratingConversationId],
   )
 
   const handleConversationClick = useCallback((key: string) => {
@@ -1275,7 +1503,7 @@ export function ChatSidebar() {
         },
         { key: 'delete', label: t('chat.delete'), icon: <Trash2 size={14} />, danger: true },
       ],
-      onClick: (menuInfo: { key: string; domEvent?: DeleteShortcutEvent }) => {
+      onClick: (menuInfo: { key: string }) => {
         if (menuInfo.key.startsWith('move-to-cat:')) {
           const catId = menuInfo.key.slice('move-to-cat:'.length)
           void updateConversation(conv.id, { category_id: catId })
@@ -1291,7 +1519,7 @@ export function ChatSidebar() {
           case 'archive': toggleArchive(conv.id); break
           case 'rename': handleRename(item); break
           case 'generate-title': handleGenerateTitle(conv.id); break
-          case 'delete': handleDelete(item, menuInfo.domEvent); break
+          case 'delete': handleDelete(item); break
         }
       },
     }
@@ -1499,7 +1727,7 @@ export function ChatSidebar() {
                           }}
                         />
                       </Tooltip>
-                      <Tooltip title={directDeleteHint}>
+                      <Tooltip title={t('chat.delete')}>
                         <Button
                           type="text"
                           size="small"
@@ -1530,7 +1758,6 @@ export function ChatSidebar() {
         >
           <div ref={listScrollRef} className="flex-1 overflow-y-auto">
             <div
-              onMouseMove={syncDirectDeleteModeFromMouse}
               onContextMenu={(e) => {
               if (multiSelectMode) { e.preventDefault(); e.stopPropagation(); return }
               const listItem = (e.target as HTMLElement).closest('[data-conv-id]') as HTMLElement
@@ -1602,11 +1829,12 @@ export function ChatSidebar() {
                 <DndContext
                   sensors={dndSensors}
                   collisionDetection={closestCenter}
-                  onDragStart={handleCategoryDragStart}
-                  onDragOver={handleCategoryDragOver}
-                  onDragEnd={handleCategoryDragEnd}
-                  onDragCancel={handleCategoryDragCancel}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDragEnd={handleDragEnd}
+                  onDragCancel={handleDragCancel}
                 >
+                  <DragZoneContext.Provider value={{ overConvId: dragOverConvId, zone: dragOverZone }}>
                   <ConversationList
                     rows={conversationRows}
                     activeKey={multiSelectMode ? undefined : (activeConversationId ?? undefined)}
@@ -1630,7 +1858,18 @@ export function ChatSidebar() {
                         </div>
                       )
                     })() : null}
+                    {activeDragConvId ? (() => {
+                      const conv = conversations.find((c) => c.id === activeDragConvId)
+                      if (!conv) return null
+                      return (
+                        <div className="flex items-center gap-2" style={{ opacity: 0.8, cursor: 'grabbing', fontSize: 13 }}>
+                          <GripVertical size={12} style={{ opacity: 0.4 }} />
+                          <ConversationTitleText title={conv.title} className="flex-1 text-sm" />
+                        </div>
+                      )
+                    })() : null}
                   </DragOverlay>
+                  </DragZoneContext.Provider>
                 </DndContext>
               ) : (
                 <div className="flex items-center justify-center h-full">
@@ -1656,6 +1895,7 @@ export function ChatSidebar() {
         initialDefaultMaxTokens={editingCategory?.default_max_tokens}
         initialDefaultTopP={editingCategory?.default_top_p}
         initialDefaultFrequencyPenalty={editingCategory?.default_frequency_penalty}
+        initialDefaultMode={editingCategory?.default_mode}
         title={editingCategory ? t('chat.editCategory') : t('chat.createCategory')}
       />
 

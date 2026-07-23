@@ -32,6 +32,7 @@ function conversation(
     category_id: null,
     parent_conversation_id: null,
     message_count: 0,
+    sort_order: 0,
     created_at: 1,
     updated_at: 1_704_067_200,
     ...overrides,
@@ -54,6 +55,7 @@ function category(
     default_max_tokens: null,
     default_top_p: null,
     default_frequency_penalty: null,
+    default_mode: null,
     sort_order: 0,
     is_collapsed: false,
     created_at: 1,
@@ -63,7 +65,7 @@ function category(
 }
 
 describe('buildConversationRows', () => {
-  it('builds category, parent-child, empty and date groups in one stable row model', () => {
+  it('builds pinned shortcut, category, recursive child, empty and uncategorized groups', () => {
     const rows = buildConversationRows({
       conversations: [
         conversation('parent', { category_id: 'work', updated_at: 10 }),
@@ -79,20 +81,34 @@ describe('buildConversationRows', () => {
 
     expect(rows.map((row) => {
       if (row.type === 'conversation') {
-        return `${row.type}:${row.conversation.id}:${row.isChild ? 'child' : 'root'}`
+        return `${row.type}:${row.conversation.id}:${row.isChild ? 'child' : 'root'}${row.isPinnedShortcut ? ':pin' : ''}`
       }
       return `${row.type}:${row.group}`
     })).toEqual([
+      'groupHeader:pinned',
+      'conversation:pinned:root:pin',
       'groupHeader:cat:work',
       'conversation:parent:root',
       'conversation:child:child',
       'groupHeader:cat:empty',
       'emptyCategory:cat:empty',
-      'groupHeader:pinned',
-      'conversation:pinned:root',
-      'groupHeader:today',
+      'groupHeader:uncategorized',
       'conversation:today:root',
+      'conversation:pinned:root',
     ])
+  })
+
+  it('omits the pinned shortcut group when no top-level conversation is pinned', () => {
+    const rows = buildConversationRows({
+      conversations: [conversation('a'), conversation('b')],
+      categories: [],
+      expandedParentIds: new Set(),
+      expandedGroupKeys: new Set(),
+      nowSeconds: 1_704_153_600,
+    })
+
+    expect(rows.map((row) => row.type === 'groupHeader' ? row.group : null)).not.toContain('pinned')
+    expect(rows.map((row) => row.type === 'groupHeader' ? row.group : null)).toContain('uncategorized')
   })
 
   it('keeps collapsed category headers while omitting their content', () => {
@@ -137,6 +153,23 @@ describe('buildConversationRows', () => {
       .toEqual(['parent'])
     expect(expanded.filter((row) => row.type === 'conversation').map((row) => row.conversation.id))
       .toEqual(['parent', 'child'])
+  })
+
+  it('renders nested conversations at any depth without indentation-specific state', () => {
+    const rows = buildConversationRows({
+      conversations: [
+        conversation('root'),
+        conversation('mid', { parent_conversation_id: 'root' }),
+        conversation('leaf', { parent_conversation_id: 'mid' }),
+      ],
+      categories: [],
+      expandedParentIds: new Set(['root', 'mid']),
+      expandedGroupKeys: new Set<string>(),
+      nowSeconds: 1_704_153_600,
+    })
+
+    expect(rows.filter((row) => row.type === 'conversation').map((row) => row.conversation.id))
+      .toEqual(['root', 'mid', 'leaf'])
   })
 })
 

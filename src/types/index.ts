@@ -208,6 +208,7 @@ export interface ConversationCategory {
   default_max_tokens: number | null;
   default_top_p: number | null;
   default_frequency_penalty: number | null;
+  default_mode: 'agent' | 'chat' | null;
   sort_order: number;
   is_collapsed: boolean;
   created_at: number;
@@ -237,6 +238,7 @@ export interface Conversation {
   category_id: string | null;
   parent_conversation_id: string | null;
   mode?: 'chat' | 'agent' | 'role';
+  sort_order: number;
   message_count: number;
   created_at: number;
   updated_at: number;
@@ -379,7 +381,9 @@ export interface UpdateConversationInput {
   enabled_memory_namespace_ids?: string[];
   context_compression?: boolean;
   category_id?: string | null;
+  parent_conversation_id?: string | null;
   mode?: 'chat' | 'agent' | 'role';
+  sort_order?: number;
 }
 
 // === Gateway System ===
@@ -606,6 +610,8 @@ export interface AppSettings {
   chat_minimap_style?: 'faq' | 'sticky';
   /** Collapse the chat page's secondary conversation sidebar. Default: false */
   chat_sidebar_collapsed?: boolean;
+  /** Expanded parent conversation IDs in the sidebar (for nested conversations). */
+  chat_sidebar_expanded_parent_ids?: string[];
   /** Inherit current conversation capability preferences when creating a new conversation. Default: true */
   inherit_conversation_preferences_on_create?: boolean;
   /** Timeout before the first chat stream packet in seconds. 0 disables. */

@@ -302,9 +302,6 @@ function VirtualConversationList({
             onClick={onActiveChange}
             style={{
               ...style,
-              ...(row.group.startsWith('cat:')
-                ? { paddingInlineStart: token.paddingXL }
-                : {}),
             }}
           />
         )

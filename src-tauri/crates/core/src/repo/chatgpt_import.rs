@@ -203,6 +203,7 @@ pub async fn import_chatgpt_export_from_path(
             category_id: Set(None),
             parent_conversation_id: Set(None),
             mode: Set("chat".to_string()),
+            sort_order: Set(0),
         }
         .insert(&txn)
         .await?;

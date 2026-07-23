@@ -37,6 +37,7 @@ mod m20260627_000001_add_roles;
 mod m20260628_000001_repair_roles_schema;
 mod m20260701_000001_add_chat_perf_indexes;
 mod m20260702_000001_add_inline_media_failures;
+mod m20260722_000001_add_conversation_sort_and_category_default_mode;
 
 pub struct Migrator;
 
@@ -81,6 +82,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260628_000001_repair_roles_schema::Migration),
             Box::new(m20260701_000001_add_chat_perf_indexes::Migration),
             Box::new(m20260702_000001_add_inline_media_failures::Migration),
+            Box::new(m20260722_000001_add_conversation_sort_and_category_default_mode::Migration),
         ]
     }
 }

@@ -112,6 +112,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   chat_minimap_enabled: false,
   chat_minimap_style: 'faq',
   chat_sidebar_collapsed: false,
+  chat_sidebar_expanded_parent_ids: [],
   inherit_conversation_preferences_on_create: true,
   chat_stream_first_packet_timeout_secs: 180,
   chat_stream_idle_timeout_secs: 90,

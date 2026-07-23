@@ -140,8 +140,9 @@ function rows(count: number): ConversationListRow[] {
   return Array.from({ length: count }, (_, index) => ({
     type: 'conversation' as const,
     key: `conversation:conv-${index}`,
-    group: 'today',
+    group: 'uncategorized',
     isChild: false,
+    isPinnedShortcut: false,
     childCount: 0,
     expanded: false,
     conversation: {
@@ -370,7 +371,7 @@ describe('ConversationList threshold behavior', () => {
     const childRow = screen.getByText('Conversation 0').closest('li')!
 
     expect(onGroupPointerDown).toHaveBeenCalledTimes(1)
-    expect(childRow).toHaveStyle({ height: '40px', paddingInlineStart: '44px' })
+    expect(childRow).toHaveStyle({ height: '40px', paddingInlineStart: '20px' })
   })
 
   it('uses logical positioning and RTL-native menu placement', () => {

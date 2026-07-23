@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Modal, Input, Avatar, theme, Divider, Typography } from 'antd';
+import { Modal, Input, Avatar, theme, Divider, Typography, Select } from 'antd';
 import { FolderOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { IconEditor } from '@/components/shared/IconEditor';
@@ -22,6 +22,7 @@ export interface CategoryEditFormData {
   default_max_tokens: number | null;
   default_top_p: number | null;
   default_frequency_penalty: number | null;
+  default_mode: 'agent' | 'chat' | null;
 }
 
 interface CategoryEditModalProps {
@@ -38,6 +39,7 @@ interface CategoryEditModalProps {
   initialDefaultMaxTokens?: number | null;
   initialDefaultTopP?: number | null;
   initialDefaultFrequencyPenalty?: number | null;
+  initialDefaultMode?: 'agent' | 'chat' | null;
   title?: string;
 }
 
@@ -55,6 +57,7 @@ export function CategoryEditModal({
   initialDefaultMaxTokens = null,
   initialDefaultTopP = null,
   initialDefaultFrequencyPenalty = null,
+  initialDefaultMode = null,
   title,
 }: CategoryEditModalProps) {
   const { t } = useTranslation();
@@ -71,6 +74,7 @@ export function CategoryEditModal({
   const [defaultMaxTokens, setDefaultMaxTokens] = useState<number | null>(initialDefaultMaxTokens);
   const [defaultTopP, setDefaultTopP] = useState<number | null>(initialDefaultTopP);
   const [defaultFrequencyPenalty, setDefaultFrequencyPenalty] = useState<number | null>(initialDefaultFrequencyPenalty);
+  const [defaultMode, setDefaultMode] = useState<'agent' | 'chat' | null>(initialDefaultMode);
 
   useEffect(() => {
     if (open) {
@@ -84,6 +88,7 @@ export function CategoryEditModal({
       setDefaultMaxTokens(initialDefaultMaxTokens ?? null);
       setDefaultTopP(initialDefaultTopP ?? null);
       setDefaultFrequencyPenalty(initialDefaultFrequencyPenalty ?? null);
+      setDefaultMode(initialDefaultMode ?? null);
     }
   }, [
     open,
@@ -97,6 +102,7 @@ export function CategoryEditModal({
     initialDefaultMaxTokens,
     initialDefaultTopP,
     initialDefaultFrequencyPenalty,
+    initialDefaultMode,
   ]);
 
   const selectedModelValue = defaultProviderId && defaultModelId
@@ -126,6 +132,7 @@ export function CategoryEditModal({
       default_max_tokens: defaultMaxTokens,
       default_top_p: defaultTopP,
       default_frequency_penalty: defaultFrequencyPenalty,
+      default_mode: defaultMode,
     });
     onClose();
   };
@@ -174,6 +181,23 @@ export function CategoryEditModal({
         />
 
         <Divider style={{ margin: '4px 0 0' }} />
+
+        <div style={{ width: '100%', maxWidth: 420 }}>
+          <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+            {t('settings.defaultConversationMode')}
+          </Typography.Text>
+          <Select
+            value={defaultMode ?? undefined}
+            onChange={(v: 'agent' | 'chat') => setDefaultMode(v ?? null)}
+            placeholder={t('settings.useGlobalDefault')}
+            allowClear
+            style={{ width: '100%' }}
+            options={[
+              { value: 'agent', label: t('common.agentMode') },
+              { value: 'chat', label: t('common.chatMode') },
+            ]}
+          />
+        </div>
 
         <div style={{ width: '100%', maxWidth: 420 }}>
           <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>

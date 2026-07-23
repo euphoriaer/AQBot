@@ -1686,6 +1686,16 @@ pub async fn branch_conversation(
     .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn reorder_conversations(
+    state: State<'_, AppState>,
+    conversation_ids: Vec<String>,
+) -> Result<(), String> {
+    aqbot_core::repo::conversation::reorder_conversations(&state.sea_db, &conversation_ids)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 async fn delete_conversation_with_attachments(
     db: &sea_orm::DatabaseConnection,
     conversation_id: &str,
@@ -1699,17 +1709,46 @@ async fn delete_conversation_with_attachments_using(
     file_store: &aqbot_core::file_store::FileStore,
     conversation_id: &str,
 ) -> Result<(), String> {
+    use aqbot_core::entity::conversations::{Column as ConversationsColumn, Entity as ConversationsEntity};
+    use sea_orm::QuerySelect;
+
     let _file_reference_guard = aqbot_core::repo::stored_file::lock_file_references().await;
-    let files =
-        aqbot_core::repo::stored_file::list_stored_files_by_conversation(db, conversation_id)
+
+    // Recursively collect all descendant conversation IDs (parent + all children at any depth).
+    let mut all_ids: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = vec![conversation_id.to_string()];
+    let mut visited: HashSet<String> = HashSet::new();
+    while let Some(current) = queue.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        all_ids.push(current.clone());
+        let child_ids: Vec<String> = ConversationsEntity::find()
+            .select_only()
+            .column(ConversationsColumn::Id)
+            .filter(ConversationsColumn::ParentConversationId.eq(&current))
+            .into_tuple()
+            .all(db)
             .await
             .map_err(|e| e.to_string())?;
-    let candidate_ids = files
-        .iter()
-        .map(|file| file.id.clone())
-        .collect::<HashSet<_>>();
+        queue.extend(child_ids);
+    }
+
+    // Collect attachment file candidates from every conversation in the subtree.
+    let mut candidate_ids: HashSet<String> = HashSet::new();
+    for id in &all_ids {
+        let files =
+            aqbot_core::repo::stored_file::list_stored_files_by_conversation(db, id)
+                .await
+                .map_err(|e| e.to_string())?;
+        for file in files {
+            candidate_ids.insert(file.id);
+        }
+    }
+
     let txn = db.begin().await.map_err(|error| error.to_string())?;
-    let deleted = aqbot_core::entity::conversations::Entity::delete_by_id(conversation_id)
+    let deleted = ConversationsEntity::delete_many()
+        .filter(ConversationsColumn::Id.is_in(&all_ids))
         .exec(&txn)
         .await
         .map_err(|error| error.to_string())?;

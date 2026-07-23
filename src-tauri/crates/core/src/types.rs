@@ -302,6 +302,7 @@ pub struct Conversation {
     pub category_id: Option<String>,
     pub parent_conversation_id: Option<String>,
     pub mode: String,
+    pub sort_order: i32,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -452,6 +453,7 @@ pub struct UpdateConversationInput {
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub parent_conversation_id: Option<Option<String>>,
     pub mode: Option<String>,
+    pub sort_order: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -467,6 +469,7 @@ pub struct ConversationCategory {
     pub default_max_tokens: Option<i64>,
     pub default_top_p: Option<f64>,
     pub default_frequency_penalty: Option<f64>,
+    pub default_mode: Option<String>,
     pub sort_order: i32,
     pub is_collapsed: bool,
     pub created_at: i64,
@@ -485,6 +488,7 @@ pub struct CreateConversationCategoryInput {
     pub default_max_tokens: Option<i64>,
     pub default_top_p: Option<f64>,
     pub default_frequency_penalty: Option<f64>,
+    pub default_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -508,6 +512,8 @@ pub struct UpdateConversationCategoryInput {
     pub default_top_p: Option<Option<f64>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub default_frequency_penalty: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub default_mode: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -843,6 +849,8 @@ pub struct AppSettings {
     pub chat_minimap_style: String,
     /// Collapse the chat page's secondary conversation sidebar.
     pub chat_sidebar_collapsed: bool,
+    /// Expanded parent conversation IDs in the sidebar (for nested conversations).
+    pub chat_sidebar_expanded_parent_ids: Vec<String>,
     /// Inherit current conversation capability preferences when creating a new conversation.
     pub inherit_conversation_preferences_on_create: bool,
     /// Timeout before the first chat stream packet in seconds. 0 disables.
@@ -988,6 +996,7 @@ impl Default for AppSettings {
             chat_minimap_enabled: false,
             chat_minimap_style: "faq".to_string(),
             chat_sidebar_collapsed: false,
+            chat_sidebar_expanded_parent_ids: Vec::new(),
             inherit_conversation_preferences_on_create: true,
             chat_stream_first_packet_timeout_secs: 180,
             chat_stream_idle_timeout_secs: 90,

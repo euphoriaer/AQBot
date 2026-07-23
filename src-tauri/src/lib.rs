@@ -267,6 +267,7 @@ pub fn run() {
         commands::conversations::update_conversation,
         commands::conversations::delete_conversation,
         commands::conversations::branch_conversation,
+        commands::conversations::reorder_conversations,
         commands::conversations::search_conversations,
         commands::conversations::send_message,
         commands::conversations::toggle_pin_conversation,
