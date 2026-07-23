@@ -751,12 +751,30 @@ pub async fn agent_query(
     model_id: String,
     attachments: Option<Vec<AttachmentInput>>,
 ) -> Result<(), String> {
-    // 1. Get agent session (must exist)
-    let session =
-        agent_session::get_agent_session_by_conversation_id(&state.sea_db, &conversation_id)
+    // 1. Get or create agent session
+    let session = match agent_session::get_agent_session_by_conversation_id(
+        &state.sea_db,
+        &conversation_id,
+    )
+    .await
+    .map_err(|e| e.to_string())?
+    {
+        Some(s) => s,
+        None => {
+            tracing::warn!(
+                conversation_id = %conversation_id,
+                "Agent session not found, auto-creating"
+            );
+            agent_session::upsert_agent_session(
+                &state.sea_db,
+                &conversation_id,
+                None,
+                None,
+            )
             .await
             .map_err(|e| e.to_string())?
-            .ok_or("Agent session not found. Please switch to Agent mode first.")?;
+        }
+    };
 
     ensure_agent_prompt_safe_for_persistence(&prompt)?;
     // 2. Atomically reserve this conversation before any persistence or SDK

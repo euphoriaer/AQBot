@@ -70,8 +70,15 @@ impl InputRunner for AgentInputRunner {
             result = &mut query_handle => {
                 match result {
                     Ok(Ok(())) => Ok(()),
-                    Ok(Err(e)) => Err(e),
-                    Err(join_err) => Err(format!("Agent task panicked: {}", join_err)),
+                    Ok(Err(e)) => {
+                        tracing::error!(conversation_id = %ctx.conversation_id, error = %e, "Agent query failed");
+                        Err(e)
+                    },
+                    Err(join_err) => {
+                        let msg = format!("Agent task panicked: {}", join_err);
+                        tracing::error!(conversation_id = %ctx.conversation_id, error = %msg, "Agent task panicked");
+                        Err(msg)
+                    },
                 }
             }
             _ = cancel_token.cancelled() => {
