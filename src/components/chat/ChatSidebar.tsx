@@ -753,7 +753,7 @@ export function ChatSidebar() {
     }
 
     const templateCategoryId = options?.categoryId ?? null
-    const conversation = await createConversation(
+    await createConversation(
       t('chat.newConversation'),
       model.model_id,
       provider.id,
@@ -1008,10 +1008,10 @@ export function ChatSidebar() {
         }
       }
 
-      const { conversation: conv, isChild, isPinnedShortcut, childCount, expanded } = row
+      const { conversation: conv, isPinnedShortcut, childCount, expanded } = row
       const icon = buildIcon(conv)
       const isGeneratingTitle = titleGeneratingConversationId === conv.id
-      const pinNode = conv.is_pinned && !isChild && !isPinnedShortcut
+      const pinNode = conv.is_pinned && !isPinnedShortcut
         ? <Pin size={12} style={{ color: token.colorTextQuaternary, flexShrink: 0 }} />
         : null
       const generatingTitleNode = isGeneratingTitle ? (

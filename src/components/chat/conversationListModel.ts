@@ -144,8 +144,8 @@ export function buildConversationRows({
     }
   }
 
-  const pinnedTopLevel = topLevel.filter((c) => c.is_pinned)
-  if (pinnedTopLevel.length > 0) {
+  const allPinned = conversations.filter((c) => c.is_pinned)
+  if (allPinned.length > 0) {
     const group = 'pinned'
     rows.push({
       type: 'groupHeader',
@@ -155,7 +155,7 @@ export function buildConversationRows({
       collapsible: false,
       expanded: true,
     })
-    for (const conversation of sortConversations(pinnedTopLevel)) {
+    for (const conversation of sortConversations(allPinned)) {
       rows.push({
         type: 'conversation',
         key: `pinned-shortcut:${conversation.id}`,
