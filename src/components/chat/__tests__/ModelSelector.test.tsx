@@ -63,6 +63,7 @@ function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
     mode: 'chat',
     message_count: 0,
     sort_order: 0,
+    workspace_path: null,
     created_at: 0,
     updated_at: 0,
     ...overrides,

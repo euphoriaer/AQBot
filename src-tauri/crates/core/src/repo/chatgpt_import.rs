@@ -204,6 +204,7 @@ pub async fn import_chatgpt_export_from_path(
             parent_conversation_id: Set(None),
             mode: Set("chat".to_string()),
             sort_order: Set(0),
+            workspace_path: Set(None),
         }
         .insert(&txn)
         .await?;

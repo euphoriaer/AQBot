@@ -209,6 +209,7 @@ export interface ConversationCategory {
   default_top_p: number | null;
   default_frequency_penalty: number | null;
   default_mode: 'agent' | 'chat' | null;
+  default_workspace_path: string | null;
   sort_order: number;
   is_collapsed: boolean;
   created_at: number;
@@ -239,6 +240,7 @@ export interface Conversation {
   parent_conversation_id: string | null;
   mode?: 'chat' | 'agent' | 'role';
   sort_order: number;
+  workspace_path: string | null;
   message_count: number;
   created_at: number;
   updated_at: number;
@@ -384,6 +386,7 @@ export interface UpdateConversationInput {
   parent_conversation_id?: string | null;
   mode?: 'chat' | 'agent' | 'role';
   sort_order?: number;
+  workspace_path?: string | null;
 }
 
 // === Gateway System ===

@@ -17,6 +17,7 @@ pub struct Model {
     pub default_top_p: Option<f64>,
     pub default_frequency_penalty: Option<f64>,
     pub default_mode: Option<String>,
+    pub default_workspace_path: Option<String>,
     pub sort_order: i32,
     pub is_collapsed: i32,
     pub created_at: i64,

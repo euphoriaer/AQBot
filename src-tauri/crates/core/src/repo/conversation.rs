@@ -37,6 +37,7 @@ fn conversation_from_entity(m: conversations::Model) -> Conversation {
         parent_conversation_id: m.parent_conversation_id,
         mode: m.mode,
         sort_order: m.sort_order,
+        workspace_path: m.workspace_path,
         created_at: m.created_at,
         updated_at: m.updated_at,
     }

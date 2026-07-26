@@ -369,6 +369,7 @@ pub async fn import_kelivo_backup_from_path_with_root(
                 parent_conversation_id: Set(None),
                 mode: Set("chat".to_string()),
                 sort_order: Set(0),
+                workspace_path: NotSet,
             }
             .insert(&txn)
             .await?;

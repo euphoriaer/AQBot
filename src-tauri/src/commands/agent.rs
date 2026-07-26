@@ -1632,10 +1632,19 @@ pub async fn agent_query(
             state.sea_db.clone(),
         );
 
+        let agent_cwd = session.cwd.clone().or_else(|| {
+            conv.workspace_path.clone().filter(|p| !p.is_empty())
+        });
+        if agent_cwd.is_some() && session.cwd.is_none() {
+            let _ = agent_session::upsert_agent_session(
+                &state.sea_db, &conversation_id,
+                agent_cwd.as_deref(), None,
+            ).await;
+        }
         let agent_options = AgentOptions {
         model: Some(model_id.clone()),
         provider: Some(Arc::new(bridge)),
-        cwd: session.cwd.clone(),
+        cwd: agent_cwd,
         system_prompt: conv.system_prompt.clone(),
         skills_summary,
         ask_fn: Some(ask_fn),

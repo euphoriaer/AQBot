@@ -303,6 +303,7 @@ pub struct Conversation {
     pub parent_conversation_id: Option<String>,
     pub mode: String,
     pub sort_order: i32,
+    pub workspace_path: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -470,6 +471,7 @@ pub struct ConversationCategory {
     pub default_top_p: Option<f64>,
     pub default_frequency_penalty: Option<f64>,
     pub default_mode: Option<String>,
+    pub default_workspace_path: Option<String>,
     pub sort_order: i32,
     pub is_collapsed: bool,
     pub created_at: i64,
@@ -514,6 +516,8 @@ pub struct UpdateConversationCategoryInput {
     pub default_frequency_penalty: Option<Option<f64>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub default_mode: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub default_workspace_path: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

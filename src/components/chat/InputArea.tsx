@@ -286,17 +286,34 @@ export function InputArea() {
     void ensureMemoryNamespacesLoaded();
   }, [ensureMemoryNamespacesLoaded]);
 
-  // Fetch agent permission mode on mount/conversation switch
+  // Fetch agent session and initialize workspace on mount/conversation switch
   useEffect(() => {
     if (currentMode === 'agent' && activeConversationId) {
-      invoke('agent_get_session', { conversationId: activeConversationId })
-        .then((session: any) => {
-          if (session) {
-            setAgentPermissionMode(session.permission_mode || 'default');
-            setAgentCwd(session.cwd || null);
+      let cancelled = false;
+      (async () => {
+        const session = await invoke<{ cwd: string | null; permission_mode?: string }>('agent_get_session', { conversationId: activeConversationId });
+        if (cancelled) return;
+        if (session) {
+          setAgentPermissionMode(session.permission_mode || 'default');
+          setAgentCwd(session.cwd || null);
+        } else {
+          // No session yet — initialize workspace from conversation path or auto-create
+          try {
+            const workspacePath = await invoke<string>('agent_ensure_workspace', {
+              conversationId: activeConversationId,
+            });
+            if (cancelled) return;
+            await invoke('agent_update_session', {
+              conversationId: activeConversationId,
+              cwd: workspacePath,
+            });
+            setAgentCwd(workspacePath);
+          } catch (e) {
+            console.warn('Failed to init agent workspace:', e);
           }
-        })
-        .catch(() => {});
+        }
+      })();
+      return () => { cancelled = true; };
     }
   }, [currentMode, activeConversationId]);
 

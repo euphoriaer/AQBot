@@ -22,6 +22,7 @@ fn category_from_entity(m: conversation_categories::Model) -> ConversationCatego
         default_top_p: m.default_top_p,
         default_frequency_penalty: m.default_frequency_penalty,
         default_mode: m.default_mode,
+        default_workspace_path: m.default_workspace_path,
         sort_order: m.sort_order,
         is_collapsed: m.is_collapsed != 0,
         created_at: m.created_at,
@@ -68,6 +69,7 @@ pub async fn create_conversation_category(
         default_top_p: Set(input.default_top_p),
         default_frequency_penalty: Set(input.default_frequency_penalty),
         default_mode: Set(input.default_mode),
+        default_workspace_path: NotSet,
         sort_order: Set(sort_order),
         is_collapsed: Set(1),
         created_at: Set(now),
@@ -120,6 +122,9 @@ pub async fn update_conversation_category(
     }
     if let Some(default_mode) = input.default_mode {
         am.default_mode = Set(default_mode);
+    }
+    if let Some(default_workspace_path) = input.default_workspace_path {
+        am.default_workspace_path = Set(default_workspace_path);
     }
     am.updated_at = Set(now_ts());
     am.update(db).await?;

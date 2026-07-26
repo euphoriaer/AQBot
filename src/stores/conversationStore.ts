@@ -708,6 +708,7 @@ function categoryTemplateUpdateFromCategory(
   | 'top_p'
   | 'frequency_penalty'
   | 'mode'
+  | 'workspace_path'
 > {
   if (!category) {
     return {};
@@ -721,6 +722,7 @@ function categoryTemplateUpdateFromCategory(
     top_p: category.default_top_p,
     frequency_penalty: category.default_frequency_penalty,
     mode: category.default_mode ?? undefined,
+    workspace_path: category.default_workspace_path ?? undefined,
   };
 }
 

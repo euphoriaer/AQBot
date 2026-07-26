@@ -35,6 +35,7 @@ pub struct Model {
     pub parent_conversation_id: Option<String>,
     pub mode: String,
     pub sort_order: i32,
+    pub workspace_path: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
