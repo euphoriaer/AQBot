@@ -419,6 +419,7 @@ function appendLiveStreamContent(
 function materializeLiveStreamContent(
   set: ConversationStoreSet,
   messageIds: Array<string | null | undefined>,
+  _conversationId?: string | null,
 ) {
   const ids = Array.from(new Set(messageIds.filter((messageId): messageId is string => (
     typeof messageId === 'string' && messageId.length > 0
@@ -429,6 +430,11 @@ function materializeLiveStreamContent(
     let changed = false;
     const messages = s.messages.map((message) => {
       if (!idSet.has(message.id)) return message;
+      // Guard against cross-talk: only materialize content in the conversation
+      // the user is currently viewing. The conversationId parameter is the
+      // stream's conversation, but retainPreviousWindow copies messages with
+      // their original conversation_id, so we must check activeConversationId.
+      if (s.activeConversationId != null && message.conversation_id !== s.activeConversationId) return message;
       const liveContent = getLiveStreamContent(message.id);
       if (liveContent === undefined || liveContent === message.content) return message;
       changed = true;
@@ -2816,27 +2822,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const providerId = conversation.provider_id;
     const modelId = conversation.model_id;
 
-    // Enqueue first. The backend returns a handle immediately and processes
-    // the input in FIFO order. We do NOT create optimistic UI messages here -
-    // that happens in `_startAgentInputRun`, triggered by the global
-    // `agent-message-id` listener when this input reaches the front of the
-    // queue and the backend actually starts the agent run. This way, queued
-    // inputs don't show a "waiting" state in the main window; they appear
-    // only when the previous run finishes, just like asking again.
-    const handle = await invoke<InputHandle>('session_enqueue_input', {
-      request: {
-        conversation_id: conversationId,
-        content,
-        attachments: attachments ?? [],
-        provider_id: providerId,
-        model_id: modelId,
-        remote: false,
-      },
-    });
-
+    // Add to pending queue BEFORE enqueueing so that agent-message-id
+    // can find the entry even if the backend responds instantly.
+    // The handle_id is updated once session_enqueue_input returns.
     return new Promise<void>((resolve, reject) => {
+      const placeholderHandleId = `pending_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       const pending: PendingAgentInput = {
-        handle_id: handle.handle_id,
+        handle_id: placeholderHandleId,
         conversationId,
         content,
         attachments,
@@ -2849,6 +2841,29 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         ...(_pendingAgentInputs[conversationId] ?? []),
         pending,
       ];
+
+      // Enqueue asynchronously; update the real handle_id when done.
+      invoke<InputHandle>('session_enqueue_input', {
+        request: {
+          conversation_id: conversationId,
+          content,
+          attachments: attachments ?? [],
+          provider_id: providerId,
+          model_id: modelId,
+          remote: false,
+        },
+      }).then((handle) => {
+        pending.handle_id = handle.handle_id;
+      }).catch((e) => {
+        // Remove from pending queue on error
+        const q = _pendingAgentInputs[conversationId];
+        if (q) {
+          const idx = q.indexOf(pending);
+          if (idx >= 0) q.splice(idx, 1);
+          if (q.length === 0) delete _pendingAgentInputs[conversationId];
+        }
+        reject(e instanceof Error ? e : new Error(String(e)));
+      });
     });
   },
 
@@ -2908,21 +2923,24 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       status: 'partial',
     };
 
+    const isActiveConv = get().activeConversationId === conversationId;
     set((s) => ({
-      messages: [...s.messages, optimisticUserMsg, placeholderAssistant],
-      streaming: true,
-      streamingConversationId: conversationId,
-      streamingMessageId: currentMsgId,
+      ...(isActiveConv ? {
+        messages: [...s.messages, optimisticUserMsg, placeholderAssistant],
+        streaming: true,
+        streamingConversationId: conversationId,
+        streamingMessageId: currentMsgId,
+        streamActivityByMessageId: {
+          ...s.streamActivityByMessageId,
+          [currentMsgId]: createStreamActivity(
+            conversation?.provider_id,
+            conversation?.model_id,
+          ),
+        },
+      } : {}),
       runningConversations: {
         ...s.runningConversations,
         [conversationId]: true,
-      },
-      streamActivityByMessageId: {
-        ...s.streamActivityByMessageId,
-        [currentMsgId]: createStreamActivity(
-          conversation?.provider_id,
-          conversation?.model_id,
-        ),
       },
     }));
 
@@ -2944,9 +2962,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
       const textChunk = _agentPendingText;
       const thinkingChunk = _agentPendingThinking;
+      if (!textChunk && !thinkingChunk) return;
+
+      // If the target message is not in the current store (e.g. user switched
+      // to a different conversation), keep the pending text and retry later.
+      // This preserves streaming content across conversation switches.
+      const msgExists = get().messages.some(m => m.id === currentMsgId);
+      if (!msgExists) {
+        _agentFlushTimer = setTimeout(flushAgentStreamChunks, AGENT_STREAM_UI_FLUSH_INTERVAL_MS);
+        return;
+      }
+
       _agentPendingText = '';
       _agentPendingThinking = '';
-      if (!textChunk && !thinkingChunk) return;
 
       set((s) => {
         const wasThinking = s.thinkingActiveMessageIds.has(currentMsgId);
@@ -3072,10 +3100,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             const nextRunning = { ...s.runningConversations };
             delete nextRunning[conversationId];
             const wasPrimaryStream = s.streamingConversationId === conversationId;
+            const nextPrimaryConvId = wasPrimaryStream
+              ? Object.keys(nextRunning).find(id => id !== conversationId) ?? null
+              : s.streamingConversationId;
             return {
               streaming: Object.keys(nextRunning).length > 0,
               streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
-              streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+              streamingConversationId: nextPrimaryConvId,
               activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
               runningConversations: nextRunning,
               thinkingActiveMessageIds: (() => {
@@ -3128,10 +3159,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             const nextRunning = { ...s.runningConversations };
             delete nextRunning[conversationId];
             const wasPrimaryStream = s.streamingConversationId === conversationId;
+            const nextPrimaryConvId = wasPrimaryStream
+              ? Object.keys(nextRunning).find(id => id !== conversationId) ?? null
+              : s.streamingConversationId;
             return {
               streaming: Object.keys(nextRunning).length > 0,
               streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
-              streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+              streamingConversationId: nextPrimaryConvId,
               activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
               runningConversations: nextRunning,
               thinkingActiveMessageIds: (() => {
@@ -3165,10 +3199,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           const nextRunning = { ...s.runningConversations };
           delete nextRunning[conversationId];
           const wasPrimaryStream = s.streamingConversationId === conversationId;
+          const nextPrimaryConvId = wasPrimaryStream
+            ? Object.keys(nextRunning).find(id => id !== conversationId) ?? null
+            : s.streamingConversationId;
           return {
             streaming: Object.keys(nextRunning).length > 0,
             streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
-            streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+            streamingConversationId: nextPrimaryConvId,
             activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
             runningConversations: nextRunning,
             messages: s.messages.map((m) =>
@@ -4031,7 +4068,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (_isMultiModelActive) {
           _multiModelTotalRemaining--;
           flushPendingStreamChunk(set, get);
-          materializeLiveStreamContent(set, [message_id, get().streamingMessageId]);
+          materializeLiveStreamContent(set, [message_id, get().streamingMessageId], conversation_id);
           _streamBuffer = null;
 
           // Clear streamingMessageId and mark completed message as 'complete'
@@ -4084,7 +4121,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
         const placeholderMessageId = get().streamingMessageId;
         flushPendingStreamChunk(set, get);
-        materializeLiveStreamContent(set, [placeholderMessageId, get().streamingMessageId, message_id]);
+        materializeLiveStreamContent(set, [placeholderMessageId, get().streamingMessageId, message_id], conversation_id);
         const flushedMessageId = get().streamingMessageId ?? message_id;
         // Only preserve real backend IDs — temp placeholders (temp-assistant-*)
         // must NOT be preserved alongside the DB message, otherwise both the
@@ -4194,7 +4231,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       if (!isCurrentStreamEvent(get, stream_id)) return;
 
       flushPendingStreamChunk(set, get);
-      materializeLiveStreamContent(set, [message_id, get().streamingMessageId]);
+      materializeLiveStreamContent(set, [message_id, get().streamingMessageId], conversation_id);
       _streamBuffer = null; // Clear buffer on error
 
       // Multi-model: treat error as stream completion for this model
@@ -4506,10 +4543,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       get().streamingMessageId,
       _streamBuffer?.messageId,
       _streamBuffer?.resolvedId,
-    ]);
+    ], activeConvId);
     _pendingUiChunk = null;
-    _streamBuffer = null;
-    _pendingConversationRefresh.clear();
+    // Only clear buffer/refresh for the cancelled conversation, not all conversations
+    if (_streamBuffer && _streamBuffer.conversationId === activeConvId) {
+      _streamBuffer = null;
+    }
+    if (activeConvId) {
+      _pendingConversationRefresh.delete(activeConvId);
+    }
     // Clean up multi-model state on cancel
     if (_isMultiModelActive) {
       _isMultiModelActive = false;
@@ -4557,10 +4599,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const nextRunning = { ...s.runningConversations };
       if (activeConvId) delete nextRunning[activeConvId];
       const wasPrimaryStream = !s.streamingConversationId || s.streamingConversationId === activeConvId;
+      // If cancelling the primary stream, pick another running conversation as the new primary
+      const nextPrimaryConvId = wasPrimaryStream
+        ? Object.keys(nextRunning).find(id => id !== activeConvId) ?? null
+        : s.streamingConversationId;
       return {
         streaming: Object.keys(nextRunning).length > 0,
         streamingMessageId: wasPrimaryStream ? null : s.streamingMessageId,
-        streamingConversationId: wasPrimaryStream ? null : s.streamingConversationId,
+        streamingConversationId: nextPrimaryConvId,
         activeStreamId: wasPrimaryStream ? null : s.activeStreamId,
         runningConversations: nextRunning,
         streamActivityByMessageId: removeStreamActivities(

@@ -3721,4 +3721,140 @@ describe('conversationStore pagination', () => {
     expect(conversation.temperature).toBe(0.2);
     expect(conversation.max_tokens).toBe(8192);
   });
+
+  it('does not materialize live stream content into a different conversation (cross-talk guard)', async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, (event: unknown) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: unknown) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+
+    const {
+      getLiveStreamContent,
+      setLiveStreamContent,
+      useConversationStore,
+    } = await import('../conversationStore');
+
+    // Simulate: retainPreviousWindow copied conv-a's streaming message
+    // into the store while the user is now viewing conv-b.
+    useConversationStore.setState({
+      conversations: [
+        makeConversation('conv-a', { message_count: 1, updated_at: 10 }),
+        makeConversation('conv-b', { message_count: 0, updated_at: 20 }),
+      ] as never[],
+      activeConversationId: 'conv-b',
+      streaming: true,
+      streamingMessageId: 'assistant-a',
+      streamingConversationId: 'conv-a',
+      messages: [{
+        ...makeMessage(2, 'conv-a'),
+        id: 'assistant-a',
+        role: 'assistant',
+        content: '',
+        status: 'partial',
+      }],
+    });
+
+    // Set live stream content as if streaming had progressed in conv-a
+    setLiveStreamContent('assistant-a', 'Hello world');
+
+    await useConversationStore.getState().startStreamListening();
+
+    // Send a done chunk — triggers materializeLiveStreamContent
+    listeners.get('chat-stream-chunk')?.({
+      payload: {
+        conversation_id: 'conv-a',
+        message_id: 'assistant-a',
+        chunk: {
+          content: '',
+          thinking: null,
+          tool_calls: null,
+          done: true,
+          is_final: true,
+          usage: null,
+        },
+      },
+    });
+
+    // The copied message in conv-b should NOT have its content materialized
+    // (content should still be '', not 'Hello world')
+    expect(useConversationStore.getState().messages[0]?.content).toBe('');
+
+    // Live stream content should be cleared after materialization
+    expect(getLiveStreamContent('assistant-a')).toBeUndefined();
+
+    vi.useRealTimers();
+  });
+
+  it('does not display live stream content from conv-a when chunks arrive while user is on conv-b (switch-before-stream)', async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, (event: any) => void>();
+    listenMock.mockImplementation(async (eventName: string, handler: (event: any) => void) => {
+      listeners.set(eventName, handler);
+      return () => {};
+    });
+    const { getLiveStreamContent, useConversationStore } = await import('../conversationStore');
+
+    // Simulate: user sent message in conv-a, assistant placeholder added,
+    // then user switches to conv-b BEFORE any streaming chunks arrive.
+    useConversationStore.setState({
+      conversations: [
+        makeConversation('conv-a', { message_count: 1, updated_at: 10 }),
+        makeConversation('conv-b', { message_count: 0, updated_at: 20 }),
+      ] as never[],
+      activeConversationId: 'conv-b',
+      streaming: true,
+      streamingMessageId: 'assistant-a',
+      streamingConversationId: 'conv-a',
+      messages: [{
+        ...makeMessage(1, 'conv-a'),
+        id: 'assistant-a',
+        role: 'assistant',
+        content: '',
+        status: 'partial',
+      }],
+    });
+
+    await useConversationStore.getState().startStreamListening();
+    const onChunk = listeners.get('chat-stream-chunk');
+
+    // While on conv-b, chunk arrives for conv-a's stream
+    onChunk?.({
+      payload: {
+        conversation_id: 'conv-a',
+        message_id: 'assistant-a',
+        chunk: { content: 'Hello from A', thinking: null, tool_calls: null, done: false, usage: null },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Live stream content should NOT be set for conv-a's message while on conv-b
+    expect(getLiveStreamContent('assistant-a')).toBeUndefined();
+
+    // The message should still have empty content (not 'Hello from A')
+    expect(useConversationStore.getState().messages[0]?.content).toBe('');
+
+    // Now send more chunks and done — still no cross-talk
+    onChunk?.({
+      payload: {
+        conversation_id: 'conv-a',
+        message_id: 'assistant-a',
+        chunk: { content: ' more content', thinking: null, tool_calls: null, done: false, usage: null },
+      },
+    });
+    onChunk?.({
+      payload: {
+        conversation_id: 'conv-a',
+        message_id: 'assistant-a',
+        chunk: { content: '', thinking: null, tool_calls: null, done: true, is_final: true, usage: null },
+      },
+    });
+
+    // After done — materialization should also be blocked
+    expect(useConversationStore.getState().messages[0]?.content).toBe('');
+    expect(getLiveStreamContent('assistant-a')).toBeUndefined();
+
+    vi.useRealTimers();
+  });
 });

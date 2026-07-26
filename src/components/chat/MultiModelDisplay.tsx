@@ -18,7 +18,16 @@ import { ModelSelector } from './ModelSelector';
 export type MultiModelDisplayMode = 'tabs' | 'side-by-side' | 'stacked';
 
 function useLiveStreamContent(messageId: string | null | undefined, enabled: boolean): string | undefined {
-  const subscribedMessageId = enabled ? messageId : null;
+  const activeConversationId = useConversationStore((s) => s.activeConversationId);
+  const messageConvId = useConversationStore((s) => {
+    if (!messageId) return null;
+    const msg = s.messages.find((m) => m.id === messageId);
+    return msg?.conversation_id ?? null;
+  });
+  // Only subscribe if the message belongs to the active conversation,
+  // preventing cross-talk from retainPreviousWindow copies.
+  const canSubscribe = enabled && messageId != null && activeConversationId != null && messageConvId === activeConversationId;
+  const subscribedMessageId = canSubscribe ? messageId : null;
   return useSyncExternalStore(
     useCallback(
       (listener) => subscribeLiveStreamContent(subscribedMessageId, listener),
