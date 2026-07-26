@@ -2283,26 +2283,75 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         : null;
       const templateProviderId = category?.default_provider_id ?? providerId;
       const templateModelId = category?.default_model_id ?? modelId;
+
+      // When creating a child conversation, inherit workspace from parent
+      const parentConv = options?.parentConversationId
+        ? get().conversations.find((c) => c.id === options.parentConversationId) ?? null
+        : null;
+      const effectiveProviderId = parentConv?.provider_id ?? templateProviderId;
+      const effectiveModelId = parentConv?.model_id ?? templateModelId;
+
       const createdConversation = await invoke<Conversation>('create_conversation', {
         title,
-        modelId: templateModelId,
-        providerId: templateProviderId,
-        systemPrompt: category?.system_prompt ?? undefined,
+        modelId: effectiveModelId,
+        providerId: effectiveProviderId,
+        systemPrompt: parentConv?.system_prompt ?? category?.system_prompt ?? undefined,
         parentConversationId: options?.parentConversationId ?? null,
       });
       let conversation = createdConversation;
       try {
         const inheritConversationPreferences =
           useSettingsStore.getState().settings.inherit_conversation_preferences_on_create ?? true;
+
+        const input: UpdateConversationInput = {
+          ...categoryTemplateUpdateFromCategory(category),
+        };
+
+        if (parentConv) {
+          // Inherit all workspace settings from parent conversation
+          input.provider_id = parentConv.provider_id;
+          input.model_id = parentConv.model_id;
+          input.system_prompt = parentConv.system_prompt ?? undefined;
+          input.temperature = parentConv.temperature;
+          input.max_tokens = parentConv.max_tokens;
+          input.top_p = parentConv.top_p;
+          input.frequency_penalty = parentConv.frequency_penalty;
+          input.search_enabled = parentConv.search_enabled;
+          input.search_provider_id = parentConv.search_provider_id;
+          input.thinking_budget = parentConv.thinking_budget;
+          input.thinking_level = parentConv.thinking_level;
+          input.enabled_mcp_server_ids = parentConv.enabled_mcp_server_ids;
+          input.enabled_knowledge_base_ids = parentConv.enabled_knowledge_base_ids;
+          input.enabled_memory_namespace_ids = parentConv.enabled_memory_namespace_ids;
+          input.workspace_path = parentConv.workspace_path;
+        } else if (inheritConversationPreferences) {
+          Object.assign(input, conversationPreferenceUpdateFromState(get()));
+        } else {
+          Object.assign(input, emptyConversationPreferenceUpdate());
+        }
+
         conversation = await invoke<Conversation>('update_conversation', {
           id: createdConversation.id,
-          input: {
-            ...categoryTemplateUpdateFromCategory(category),
-            ...(inheritConversationPreferences
-              ? conversationPreferenceUpdateFromState(get())
-              : emptyConversationPreferenceUpdate()),
-          },
+          input,
         });
+
+        // Inherit parent's agent workspace path for child conversations
+        if (parentConv) {
+          try {
+            const parentSession = await invoke<{ cwd?: string } | null>('agent_get_session', {
+              conversationId: parentConv.id,
+            });
+            const parentCwd = parentSession?.cwd ?? parentConv.workspace_path;
+            if (parentCwd) {
+              await invoke('agent_update_session', {
+                conversationId: createdConversation.id,
+                cwd: parentCwd,
+              });
+            }
+          } catch {
+            // Non-critical: agent session inheritance is best-effort
+          }
+        }
       } catch (preferenceError) {
         set({ error: String(preferenceError) });
       }
