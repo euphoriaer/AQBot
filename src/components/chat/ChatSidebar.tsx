@@ -611,12 +611,33 @@ export function ChatSidebar() {
   const listScrollRef = useRef<HTMLDivElement>(null)
   const expandedParentsHydratedRef = useRef(false)
   const expandedParentsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const shiftHeldRef = useRef(false)
+  const lastClickedConvIdRef = useRef<string | null>(null)
 
   usePageSuspendCleanup(() => {
     setCategoryModalOpen(false)
     setEditingCategory(null)
     setRightClickedConvId(null)
   })
+
+  // Track Shift key for multi-select range selection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') shiftHeldRef.current = true
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') shiftHeldRef.current = false
+    }
+    const handleBlur = () => { shiftHeldRef.current = false }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [])
 
   // Auto-expand parent when active conversation is a child (navigation only, not on every toggle)
   useEffect(() => {
@@ -839,6 +860,7 @@ export function ChatSidebar() {
   const exitMultiSelect = useCallback(() => {
     setMultiSelectMode(false)
     setSelectedIds(new Set())
+    lastClickedConvIdRef.current = null
   }, [])
 
   const isAllSelected = useMemo(
@@ -1388,17 +1410,49 @@ export function ChatSidebar() {
   )
 
   const handleConversationClick = useCallback((key: string) => {
-    if (multiSelectMode) {
-      toggleSelect(key)
+    const shiftHeld = shiftHeldRef.current
+    if (shiftHeld) {
+      if (!multiSelectMode) {
+        setMultiSelectMode(true)
+      }
+      const currentIndex = filteredConversations.findIndex(c => c.id === key)
+      const lastId = lastClickedConvIdRef.current
+      if (lastId && currentIndex !== -1) {
+        const lastIndex = filteredConversations.findIndex(c => c.id === lastId)
+        if (lastIndex !== -1) {
+          const [start, end] = lastIndex <= currentIndex
+            ? [lastIndex, currentIndex]
+            : [currentIndex, lastIndex]
+          const rangeIds = filteredConversations.slice(start, end + 1).map(c => c.id)
+          setSelectedIds((prev) => {
+            const next = new Set(prev)
+            rangeIds.forEach(id => next.add(id))
+            return next
+          })
+        } else {
+          toggleSelect(key)
+        }
+      } else {
+        toggleSelect(key)
+      }
+      lastClickedConvIdRef.current = key
     } else {
-      setActiveConversation(key)
+      if (multiSelectMode) {
+        toggleSelect(key)
+        lastClickedConvIdRef.current = key
+      } else {
+        setActiveConversation(key)
+        lastClickedConvIdRef.current = null
+      }
     }
-  }, [multiSelectMode, toggleSelect, setActiveConversation])
+  }, [multiSelectMode, toggleSelect, setActiveConversation, filteredConversations])
 
   const rightClickMenuConfig = useMemo(() => {
     if (!rightClickedConvId) return { items: [] as any[] }
     const conv = conversationById.get(rightClickedConvId)
     if (!conv) return { items: [] as any[] }
+    const isBatch = multiSelectMode && selectedIds.size > 0 && selectedIds.has(rightClickedConvId)
+    const targetIds = isBatch ? Array.from(selectedIds) : [rightClickedConvId]
     const isPinned = conv.is_pinned ?? false
     const isGeneratingTitle = titleGeneratingConversationId === conv.id
     const categoryItems: any[] = []
@@ -1446,25 +1500,70 @@ export function ChatSidebar() {
       onClick: (menuInfo: { key: string }) => {
         if (menuInfo.key.startsWith('move-to-cat:')) {
           const catId = menuInfo.key.slice('move-to-cat:'.length)
-          void updateConversation(conv.id, { category_id: catId })
+          for (const id of targetIds) {
+            void updateConversation(id, { category_id: catId })
+          }
           return
         }
         if (menuInfo.key === 'remove-from-category') {
-          void updateConversation(conv.id, { category_id: null })
+          for (const id of targetIds) {
+            void updateConversation(id, { category_id: null })
+          }
           return
         }
-        const item = { key: conv.id, label: conv.title } as ConversationItemType
         switch (menuInfo.key) {
-          case 'new-child-conversation': void handleNewConversation({ parentConversationId: conv.id, categoryId: conv.category_id }); break
-          case 'pin': togglePin(conv.id); break
-          case 'archive': toggleArchive(conv.id); break
-          case 'rename': handleRename(item); break
-          case 'generate-title': handleGenerateTitle(conv.id); break
-          case 'delete': handleDelete(item); break
+          case 'new-child-conversation': {
+            for (const id of targetIds) {
+              const targetConv = conversationById.get(id)
+              if (targetConv) {
+                void handleNewConversation({ parentConversationId: id, categoryId: targetConv.category_id })
+              }
+            }
+            break
+          }
+          case 'pin': {
+            for (const id of targetIds) { togglePin(id) }
+            break
+          }
+          case 'archive': {
+            if (isBatch) {
+              void batchArchive(targetIds).then(() => {
+                messageApi.success(t('chat.archivedSuccess', { count: targetIds.length }))
+              })
+            } else {
+              toggleArchive(rightClickedConvId)
+            }
+            break
+          }
+          case 'rename': {
+            handleRename({ key: conv.id, label: conv.title } as ConversationItemType)
+            break
+          }
+          case 'generate-title': {
+            for (const id of targetIds) { handleGenerateTitle(id) }
+            break
+          }
+          case 'delete': {
+            if (isBatch) {
+              modal.confirm({
+                title: t('chat.deleteConfirm'),
+                content: t('chat.batchDeleteContent', { count: targetIds.length }),
+                mask: { enabled: true, blur: true },
+                okButtonProps: { danger: true },
+                onOk: async () => {
+                  await batchDelete(targetIds)
+                  exitMultiSelect()
+                },
+              })
+            } else {
+              handleDelete({ key: conv.id, label: conv.title } as ConversationItemType)
+            }
+            break
+          }
         }
       },
     }
-  }, [rightClickedConvId, conversationById, t, togglePin, toggleArchive, handleRename, handleGenerateTitle, handleDelete, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation, titleGeneratingConversationId, handleNewConversation])
+  }, [rightClickedConvId, conversationById, multiSelectMode, selectedIds, t, togglePin, toggleArchive, handleRename, handleGenerateTitle, handleDelete, buildExportChildren, categories, moveToCategoryMenuItems, updateConversation, titleGeneratingConversationId, handleNewConversation, batchArchive, batchDelete, exitMultiSelect, modal])
 
   return (
     <div className="flex flex-col h-full">
@@ -1700,7 +1799,6 @@ export function ChatSidebar() {
           <div ref={listScrollRef} className="flex-1 overflow-y-auto">
             <div
               onContextMenu={(e) => {
-              if (multiSelectMode) { e.preventDefault(); e.stopPropagation(); return }
               const listItem = (e.target as HTMLElement).closest('[data-conv-id]') as HTMLElement
               if (!listItem) { e.preventDefault(); e.stopPropagation(); return }
               const convId = listItem.getAttribute('data-conv-id')
