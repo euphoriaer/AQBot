@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
+import { AppErrorBoundary } from '@/components/layout/AppErrorBoundary';
 import {
   formatStartupError,
   installStartupDiagnostics,
@@ -21,9 +22,11 @@ async function bootstrap() {
 
   const { default: AppRoot } = await import('./App');
   ReactDOM.createRoot(rootElement).render(
-    <React.StrictMode>
-      <AppRoot />
-    </React.StrictMode>,
+    <AppErrorBoundary>
+      <React.StrictMode>
+        <AppRoot />
+      </React.StrictMode>
+    </AppErrorBoundary>,
   );
   void writeStartupDiagnostic('info', 'AQBot frontend bootstrap rendered');
 }

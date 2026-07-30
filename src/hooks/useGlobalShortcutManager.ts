@@ -117,6 +117,7 @@ export function useGlobalShortcutManager() {
 
         for (const action of SHORTCUT_ACTIONS) {
           if (!isGlobalShortcutAction(action)) continue;
+          if (cancelled) return;
           const binding = getShortcutBinding(settings, action);
           const accelerator = toTauriAccelerator(binding);
           pushDiagnostic({

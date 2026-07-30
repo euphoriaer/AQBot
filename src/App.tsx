@@ -13,7 +13,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useGlobalShortcutManager } from '@/hooks/useGlobalShortcutManager';
 import { useResolvedDarkMode } from '@/hooks/useResolvedDarkMode';
 import { useGlobalOverlayScrollbars } from '@/hooks/useGlobalOverlayScrollbars';
-import { useUpdateChecker } from '@/hooks/useUpdateChecker';
+// import { useUpdateChecker } from '@/hooks/useUpdateChecker';
 import { useProviderDeepLink } from '@/hooks/useProviderDeepLink';
 import { useShadcnTheme } from '@/theme/shadcnTheme';
 import { isTauri, invoke, listen } from '@/lib/invoke';
@@ -114,28 +114,28 @@ function AppInner() {
 
   useEffect(() => setupAgentEventListeners(), []);
 
-  // Auto-check for updates on startup and periodically
-  const { checkForUpdate } = useUpdateChecker();
-  const updateCheckInterval = useSettingsStore((s) => s.settings.update_check_interval ?? 60);
-  const updateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // // Auto-check for updates on startup and periodically
+  // const { checkForUpdate } = useUpdateChecker();
+  // const updateCheckInterval = useSettingsStore((s) => s.settings.update_check_interval ?? 60);
+  // const updateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    if (!isTauri()) return;
-    // Initial check after 3s delay
-    const timer = setTimeout(() => checkForUpdate({ silent: true }), 3000);
-    return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // useEffect(() => {
+  //   if (!isTauri()) return;
+  //   // Initial check after 3s delay
+  //   const timer = setTimeout(() => checkForUpdate({ silent: true }), 3000);
+  //   return () => clearTimeout(timer);
+  // // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, []);
 
-  useEffect(() => {
-    if (!isTauri() || !updateCheckInterval) return;
-    if (updateIntervalRef.current) clearInterval(updateIntervalRef.current);
-    const intervalMs = Math.max(updateCheckInterval, 1) * 60 * 1000;
-    updateIntervalRef.current = setInterval(() => checkForUpdate({ silent: true }), intervalMs);
-    return () => {
-      if (updateIntervalRef.current) clearInterval(updateIntervalRef.current);
-    };
-  }, [updateCheckInterval, checkForUpdate]);
+  // useEffect(() => {
+  //   if (!isTauri() || !updateCheckInterval) return;
+  //   if (updateIntervalRef.current) clearInterval(updateIntervalRef.current);
+  //   const intervalMs = Math.max(updateCheckInterval, 1) * 60 * 1000;
+  //   updateIntervalRef.current = setInterval(() => checkForUpdate({ silent: true }), intervalMs);
+  //   return () => {
+  //     if (updateIntervalRef.current) clearInterval(updateIntervalRef.current);
+  //   };
+  // }, [updateCheckInterval, checkForUpdate]);
 
   return (
     <div
